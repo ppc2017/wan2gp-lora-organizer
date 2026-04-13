@@ -834,7 +834,12 @@ def _use_both_button_state(real_name: str | None, saved_dir: str, all_loras: lis
 class LoraOrganizerPlugin(WAN2GPPlugin):
 
     name        = "Lora Organizer"
-    version     = "1.0"
+    version     = "1.01"
+
+    def __init__(self):
+        super().__init__()
+        self._model_change_pending = False
+        self._pending_model_type = None
 
     def setup_ui(self):
         self.request_global("get_lora_dir")
@@ -849,6 +854,10 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
 
     def post_ui_setup(self, requested_components=None):
         pass
+
+    def on_model_change(self, state: dict, model_type) -> None:
+        self._pending_model_type = model_type
+        self._model_change_pending = True
 
     def _build_ui(self):
         loras_comp  = getattr(self, "loras_choices",     None)
@@ -920,6 +929,17 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             # Only fall back to filesystem scan if we have no state info at all
             if state_val is None:
                 return resolve_lora_dir(state_val)
+            return ""
+
+        def resolve_lora_dir_for_model_type(model_type) -> str:
+            get_ld = getattr(self, "get_lora_dir", None)
+            if get_ld is not None and model_type:
+                try:
+                    path = get_ld(model_type)
+                    if path:
+                        return os.path.abspath(path)
+                except Exception:
+                    pass
             return ""
 
         def live_loras(lora_dir: str = "") -> list:
@@ -1224,8 +1244,8 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 gr.update(visible=show_actions), # edit_row
             )
 
-        def _do_refresh(state_val, forced_loras=None):
-            lora_dir  = resolve_lora_dir_always(state_val)
+        def _do_refresh(state_val, forced_loras=None, forced_lora_dir=None):
+            lora_dir  = forced_lora_dir if forced_lora_dir is not None else resolve_lora_dir_always(state_val)
             # Use filesystem scan directly; forced_loras is already a scan result
             # from the caller. Never use live_loras() here to avoid stale choices fallback.
             cur_loras = forced_loras if forced_loras is not None else _scan_dir(lora_dir)
@@ -1356,13 +1376,18 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
         try:
             timer = gr.Timer(value=2)
             def on_timer(saved_dir, saved_loras, state_val):
-                new_dir   = resolve_lora_dir_always(state_val)
+                if not getattr(self, "_model_change_pending", False):
+                    return (gr.update(),) * len(_loras_change_outputs)
+                model_type = getattr(self, "_pending_model_type", None)
+                self._model_change_pending = False
+                self._pending_model_type = None
+                new_dir = resolve_lora_dir_for_model_type(model_type)
                 if not new_dir:
                     return (gr.update(),) * len(_loras_change_outputs)
                 cur_loras = _scan_dir(new_dir)
                 if new_dir == saved_dir and cur_loras == saved_loras:
                     return (gr.update(),) * len(_loras_change_outputs)
-                return (*_do_refresh(state_val, cur_loras), gr.update())
+                return (*_do_refresh(state_val, cur_loras, new_dir), gr.update())
             timer.tick(fn=on_timer,
                        inputs=[st_dir, st_loras,
                                state_comp if state_comp is not None else gr.State(None)],
