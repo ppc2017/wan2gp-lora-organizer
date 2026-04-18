@@ -413,7 +413,7 @@ _CSS_BASE = """
 #lo_btn_confirm, #lo_btn_cancel_grp,
 #lo_btn_del_yes, #lo_btn_del_no,
 #lo_btn_save_settings,
-#lo_btn_preview_add, #lo_btn_preview_left, #lo_btn_preview_right,
+#lo_btn_preview_add, #lo_btn_preview_expand, #lo_btn_preview_left, #lo_btn_preview_right,
 #lo_btn_preview_remove, #lo_btn_preview_clear {
     font-size: 0.8rem !important;
     min-height: 2.45rem !important;
@@ -517,6 +517,8 @@ _CSS_HORIZ = """
 """
 
 DEFAULT_LISTBOX_HEIGHT = 390
+PREVIEW_GALLERY_COMPACT_HEIGHT = 200
+PREVIEW_GALLERY_EXPANDED_HEIGHT = 400
 LORA_VIEW_VERTICAL = "Vertical List View"
 LORA_VIEW_HORIZONTAL = "Horizontal List View"
 LORA_VIEW_THUMBNAIL = "Thumbnail View"
@@ -2707,7 +2709,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                     value=_preview_gallery_value(init_sel_lora, init_lora_dir),
                     columns=4,
                     object_fit="cover",
-                    height="auto",
+                    height=PREVIEW_GALLERY_COMPACT_HEIGHT,
                     interactive=False,
                     visible=bool(_preview_gallery_value(init_sel_lora, init_lora_dir)),
                     show_label=True,
@@ -2723,8 +2725,12 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                     elem_id="lo_preview_upload",
                 )
                 with gr.Row(visible=bool(init_sel_lora)) as preview_manage_row:
-                    btn_preview_add = gr.Button("➕ Add Preview Images", size="sm", min_width=0,
+                    btn_preview_add = gr.Button("➕ Add Images", size="sm", min_width=0,
                                                 interactive=bool(init_sel_lora), elem_id="lo_btn_preview_add")
+                    btn_preview_expand = gr.Button("⤢ Expand Gallery", size="sm", min_width=0,
+                                                   interactive=bool(_preview_gallery_value(init_sel_lora, init_lora_dir)),
+                                                   visible=bool(_preview_gallery_value(init_sel_lora, init_lora_dir)),
+                                                   elem_id="lo_btn_preview_expand")
                     btn_preview_left = gr.Button("◀", size="sm", min_width=0,
                                                  interactive=False, elem_id="lo_btn_preview_left")
                     btn_preview_right = gr.Button("▶", size="sm", min_width=0,
@@ -2815,6 +2821,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             st_sel_lora = gr.State(init_sel_lora)
             st_preview_work = gr.State(_preview_gallery_value(init_sel_lora, init_lora_dir))
             st_preview_index = gr.State(None)
+            st_preview_expanded = gr.State(False)
             st_clear_loras = gr.State([])
             st_clear_mult = gr.State("")
             st_clear_prompt = gr.State("")
@@ -2853,20 +2860,29 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 gr.update(interactive=in_grp),
             )
 
-        def _preview_manage_updates(real_name: str, lora_dir: str, show_upload: bool = False):
+        def _preview_expand_button_update(has_images: bool, expanded: bool):
+            return gr.update(
+                value="⤡ Collapse Gallery" if expanded else "⤢ Expand Gallery",
+                visible=has_images,
+                interactive=has_images,
+            )
+
+        def _preview_manage_updates(real_name: str, lora_dir: str, show_upload: bool = False, expanded: bool = False):
             images = _preview_gallery_value(real_name, lora_dir)
-            return _preview_manage_updates_from_images(real_name, images, None, show_upload)
+            return _preview_manage_updates_from_images(real_name, images, None, show_upload, expanded)
 
         def _preview_manage_updates_from_images(real_name: str, images: list[str], selected_index: int | None = None,
-                                                show_upload: bool = False):
+                                                show_upload: bool = False, expanded: bool = False):
             has_selection = bool(real_name)
             has_images = bool(images)
             valid_idx = selected_index if isinstance(selected_index, int) and 0 <= selected_index < len(images) else None
+            gallery_height = PREVIEW_GALLERY_EXPANDED_HEIGHT if expanded else PREVIEW_GALLERY_COMPACT_HEIGHT
             return (
-                gr.update(value=images, visible=has_images, selected_index=valid_idx),
+                gr.update(value=images, visible=has_images, selected_index=valid_idx, height=gallery_height),
                 gr.update(value=None, visible=show_upload),
                 gr.update(visible=has_selection),
                 gr.update(visible=has_selection, interactive=has_selection),
+                _preview_expand_button_update(has_images, expanded),
                 gr.update(visible=has_images, interactive=valid_idx is not None and valid_idx > 0),
                 gr.update(visible=has_images, interactive=valid_idx is not None and valid_idx < len(images) - 1),
                 gr.update(visible=has_images, interactive=valid_idx is not None),
@@ -2887,7 +2903,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 gr.update(value=e.get("info", ""),                    interactive=True),
                 gr.update(value=url, interactive=True, visible=True),
                 gr.update(visible=bool(url)),   # btn_open_url
-                *_preview_manage_updates(real_name, lora_dir, False),
+                *_preview_manage_updates(real_name, lora_dir, False, False),
                 gr.update(visible=show_actions), # edit_row
             )
 
@@ -2939,6 +2955,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 sel_lora,
                 _preview_gallery_value(sel_lora, lora_dir),
                 None,
+                False,
                 [],
                 "",
                 "",
@@ -2952,12 +2969,12 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             lora_radio, lora_list_html, activated_list_html, assign_dd,
             disp_name_tb, real_name_tb, tw_tb, str_tb, info_tb, url_tb, url_btn_row,
             preview_gallery, preview_upload, preview_manage_row,
-            btn_preview_add, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
+            btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
             edit_row,
             trigger_words_dd, btn_use, btn_clear_all, btn_reorder_loras,
             lora_manage_row, btn_lora_sort, btn_lora_sort_used,
             btn_manage_group, group_manage_row, btn_add_sub,
-            st_dir, st_loras, st_sel_lora, st_preview_work, st_preview_index,
+            st_dir, st_loras, st_sel_lora, st_preview_work, st_preview_index, st_preview_expanded,
             st_clear_loras, st_clear_mult, st_clear_prompt, st_clear_mode, st_clear_expected,
         ]
 
@@ -3246,6 +3263,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 saved_dir, real_name,
                 _preview_gallery_value(real_name, saved_dir),
                 None,
+                False,
             )
 
         _curr_act_input = loras_comp if loras_comp is not None else gr.State([])
@@ -3253,11 +3271,11 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                                    inputs=[lora_radio, st_dir, st_loras, _curr_act_input],
                                    outputs=[lora_radio, disp_name_tb, real_name_tb, tw_tb, str_tb, info_tb,
                                             url_tb, url_btn_row, preview_gallery, preview_upload, preview_manage_row,
-                                            btn_preview_add, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
+                                            btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
                                             edit_row, btn_use_both,
                                             btn_use, btn_clear_all, btn_reorder_loras,
                                             btn_lora_sort, btn_lora_sort_used, btn_lora_done,
-                                            st_dir, st_sel_lora, st_preview_work, st_preview_index],
+                                            st_dir, st_sel_lora, st_preview_work, st_preview_index, st_preview_expanded],
                                    show_progress="hidden")
 
         def on_lora_ui_action(payload, saved_dir, cur_loras, curr_act, grp, curr_selected):
@@ -3296,6 +3314,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                     None,
                     [],
                     None,
+                    False,
                 )
             e = data["loras"].get(real_name, {})
             strength = e.get("default_strength")
@@ -3325,6 +3344,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 real_name,
                 _preview_gallery_value(real_name, saved_dir),
                 None,
+                False,
             )
 
         lora_ui_dispatch.click(
@@ -3332,11 +3352,11 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             inputs=[lora_ui_action, st_dir, st_loras, _curr_act_input, grp_radio, lora_radio],
             outputs=[lora_radio, disp_name_tb, real_name_tb, tw_tb, str_tb, info_tb,
                      url_tb, url_btn_row, preview_gallery, preview_upload, preview_manage_row,
-                     btn_preview_add, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
+                     btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
                      edit_row, btn_use_both,
                      btn_use, btn_clear_all, btn_reorder_loras,
                      btn_lora_sort, btn_lora_sort_used, btn_lora_done,
-                     st_dir, st_sel_lora, st_preview_work, st_preview_index],
+                     st_dir, st_sel_lora, st_preview_work, st_preview_index, st_preview_expanded],
             show_progress="hidden"
         )
 
@@ -4102,85 +4122,101 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             outputs=[preview_upload, edit_row],
         )
 
-        def on_preview_select(real_name, preview_work, evt: gr.SelectData):
+        def on_preview_select(real_name, preview_work, expanded, evt: gr.SelectData):
             idx = evt.index if evt else None
             try:
                 idx = int(idx) if idx is not None else None
             except Exception:
                 idx = None
-            return (*_preview_manage_updates_from_images(real_name, list(preview_work or []), idx, False), idx)
+            return (*_preview_manage_updates_from_images(real_name, list(preview_work or []), idx, False, bool(expanded)), idx, bool(expanded))
 
         preview_gallery.select(
             fn=on_preview_select,
-            inputs=[lora_radio, st_preview_work],
+            inputs=[lora_radio, st_preview_work, st_preview_expanded],
             outputs=[preview_gallery, preview_upload, preview_manage_row,
-                     btn_preview_add, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
-                     st_preview_index],
+                     btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
+                     st_preview_index, st_preview_expanded],
         )
 
-        def move_preview(real_name, preview_work, preview_index, delta):
+        def move_preview(real_name, preview_work, preview_index, expanded, delta):
             images = list(preview_work or [])
             if not real_name or preview_index is None:
-                return (*_preview_manage_updates_from_images(real_name, images, None, False), images, None, gr.update())
+                return (*_preview_manage_updates_from_images(real_name, images, None, False, bool(expanded)), images, None, bool(expanded), gr.update())
             try:
                 idx = int(preview_index)
             except Exception:
                 idx = None
             if idx is None or idx < 0 or idx >= len(images):
-                return (*_preview_manage_updates_from_images(real_name, images, None, False), images, None, gr.update())
+                return (*_preview_manage_updates_from_images(real_name, images, None, False, bool(expanded)), images, None, bool(expanded), gr.update())
             new_idx = idx + delta
             if new_idx < 0 or new_idx >= len(images):
-                return (*_preview_manage_updates_from_images(real_name, images, idx, False), images, idx, gr.update())
+                return (*_preview_manage_updates_from_images(real_name, images, idx, False, bool(expanded)), images, idx, bool(expanded), gr.update())
             item = images.pop(idx)
             images.insert(new_idx, item)
-            return (*_preview_manage_updates_from_images(real_name, images, new_idx, False), images, new_idx, gr.update(visible=True))
+            return (*_preview_manage_updates_from_images(real_name, images, new_idx, False, bool(expanded)), images, new_idx, bool(expanded), gr.update(visible=True))
 
         btn_preview_left.click(
-            fn=lambda rn, pw, pi: move_preview(rn, pw, pi, -1),
-            inputs=[lora_radio, st_preview_work, st_preview_index],
+            fn=lambda rn, pw, pi, pe: move_preview(rn, pw, pi, pe, -1),
+            inputs=[lora_radio, st_preview_work, st_preview_index, st_preview_expanded],
             outputs=[preview_gallery, preview_upload, preview_manage_row,
-                     btn_preview_add, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
-                     st_preview_work, st_preview_index, edit_row],
+                     btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
+                     st_preview_work, st_preview_index, st_preview_expanded, edit_row],
         )
         btn_preview_right.click(
-            fn=lambda rn, pw, pi: move_preview(rn, pw, pi, 1),
-            inputs=[lora_radio, st_preview_work, st_preview_index],
+            fn=lambda rn, pw, pi, pe: move_preview(rn, pw, pi, pe, 1),
+            inputs=[lora_radio, st_preview_work, st_preview_index, st_preview_expanded],
             outputs=[preview_gallery, preview_upload, preview_manage_row,
-                     btn_preview_add, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
-                     st_preview_work, st_preview_index, edit_row],
+                     btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
+                     st_preview_work, st_preview_index, st_preview_expanded, edit_row],
         )
 
-        def remove_preview(real_name, preview_work, preview_index):
+        def remove_preview(real_name, preview_work, preview_index, expanded):
             images = list(preview_work or [])
             if not real_name or preview_index is None:
-                return (*_preview_manage_updates_from_images(real_name, images, None, False), images, None, gr.update())
+                return (*_preview_manage_updates_from_images(real_name, images, None, False, bool(expanded)), images, None, bool(expanded), gr.update())
             try:
                 idx = int(preview_index)
             except Exception:
                 idx = None
             if idx is None or idx < 0 or idx >= len(images):
-                return (*_preview_manage_updates_from_images(real_name, images, None, False), images, None, gr.update())
+                return (*_preview_manage_updates_from_images(real_name, images, None, False, bool(expanded)), images, None, bool(expanded), gr.update())
             del images[idx]
             next_idx = min(idx, len(images) - 1) if images else None
-            return (*_preview_manage_updates_from_images(real_name, images, next_idx, False), images, next_idx, gr.update(visible=True))
+            return (*_preview_manage_updates_from_images(real_name, images, next_idx, False, bool(expanded)), images, next_idx, bool(expanded), gr.update(visible=True))
 
         btn_preview_remove.click(
             fn=remove_preview,
-            inputs=[lora_radio, st_preview_work, st_preview_index],
+            inputs=[lora_radio, st_preview_work, st_preview_index, st_preview_expanded],
             outputs=[preview_gallery, preview_upload, preview_manage_row,
-                     btn_preview_add, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
-                     st_preview_work, st_preview_index, edit_row],
+                     btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
+                     st_preview_work, st_preview_index, st_preview_expanded, edit_row],
         )
 
         def clear_preview(real_name):
-            return (*_preview_manage_updates_from_images(real_name, [], None, False), [], None, gr.update(visible=bool(real_name)))
+            return (*_preview_manage_updates_from_images(real_name, [], None, False, False), [], None, False, gr.update(visible=bool(real_name)))
 
         btn_preview_clear.click(
             fn=clear_preview,
             inputs=[lora_radio],
             outputs=[preview_gallery, preview_upload, preview_manage_row,
-                     btn_preview_add, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
-                     st_preview_work, st_preview_index, edit_row],
+                     btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
+                     st_preview_work, st_preview_index, st_preview_expanded, edit_row],
+        )
+
+        def toggle_preview_expand(real_name, preview_work, preview_index, expanded):
+            next_expanded = not bool(expanded)
+            images = list(preview_work or [])
+            return (
+                *_preview_manage_updates_from_images(real_name, images, preview_index, False, next_expanded),
+                next_expanded,
+            )
+
+        btn_preview_expand.click(
+            fn=toggle_preview_expand,
+            inputs=[lora_radio, st_preview_work, st_preview_index, st_preview_expanded],
+            outputs=[preview_gallery, preview_upload, preview_manage_row,
+                     btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
+                     st_preview_expanded],
         )
 
         def save_edit(real_name, disp_name, tw, strength, info_text, url, preview_files, preview_work, cur_grp, saved_dir, cur_loras):
@@ -4231,6 +4267,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 safe_val,
                 _preview_gallery_value(safe_val, saved_dir),
                 None,
+                False,
             )
 
         btn_save_edit.click(fn=save_edit,
@@ -4238,9 +4275,9 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                                     info_tb, url_tb, preview_upload, st_preview_work, grp_radio, st_dir, st_loras],
                             outputs=[disp_name_tb, real_name_tb, tw_tb, str_tb, info_tb,
                                      url_tb, url_btn_row, preview_gallery, preview_upload, preview_manage_row,
-                                     btn_preview_add, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
+                                     btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
                                      edit_row,
-                                     btn_use_both, lora_radio, lora_list_html, st_dir, st_sel_lora, st_preview_work, st_preview_index])
+                                     btn_use_both, lora_radio, lora_list_html, st_dir, st_sel_lora, st_preview_work, st_preview_index, st_preview_expanded])
 
         def cancel_edit(real_name, saved_dir, cur_loras):
             pair_btn_u = _use_both_button_state(real_name, saved_dir, cur_loras if cur_loras else live_loras(saved_dir))
@@ -4252,14 +4289,15 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                     gr.update(value=_lora_list_html(data, loras, real_name)),
                     saved_dir,
                     _preview_gallery_value(real_name, saved_dir),
-                    None)
+                    None,
+                    False)
 
         btn_cancel_edit.click(fn=cancel_edit, inputs=[lora_radio, st_dir, st_loras],
                               outputs=[disp_name_tb, real_name_tb, tw_tb, str_tb, info_tb,
                                        url_tb, url_btn_row, preview_gallery, preview_upload, preview_manage_row,
-                                       btn_preview_add, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
+                                       btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
                                        edit_row,
-                                       btn_use_both, lora_radio, lora_list_html, st_dir, st_preview_work, st_preview_index])
+                                       btn_use_both, lora_radio, lora_list_html, st_dir, st_preview_work, st_preview_index, st_preview_expanded])
 
         # ── Open URL ───────────────────────────────────────────────────
         btn_open_url.click(
