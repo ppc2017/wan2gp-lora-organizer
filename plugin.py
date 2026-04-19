@@ -413,8 +413,9 @@ _CSS_BASE = """
 #lo_btn_confirm, #lo_btn_cancel_grp,
 #lo_btn_del_yes, #lo_btn_del_no,
 #lo_btn_save_settings,
+#lo_btn_cleanup_confirm, #lo_btn_cleanup_cancel,
 #lo_btn_preview_add, #lo_btn_preview_expand, #lo_btn_preview_left, #lo_btn_preview_right,
-#lo_btn_preview_remove, #lo_btn_preview_clear {
+#lo_btn_preview_remove, #lo_btn_preview_clear, #lo_btn_cleanup_scan {
     font-size: 0.8rem !important;
     min-height: 2.45rem !important;
 }
@@ -426,7 +427,11 @@ _CSS_BASE = """
     padding-right: 0 !important;
     overflow-x: hidden !important;
     overflow-y: visible !important;
-    gap: 6px !important;
+    gap: 2px !important;
+}
+#lo_accordion > .block.padded,
+#lo_accordion > .padding {
+    padding-bottom: 0 !important;
 }
 #lo_accordion .block.padded > .column.gap:first-child,
 #lo_accordion .block.padded > .svelte-vt1mxs.gap:first-child,
@@ -443,6 +448,38 @@ _CSS_BASE = """
 #lo_settings_accordion .block.padded {
     min-width: 0 !important;
     overflow-y: hidden !important;
+}
+/* Reduce vertical spacing between the metadata/settings/cleanup accordions */
+#lo_metadata_accordion,
+#lo_settings_accordion,
+#lo_cleanup_accordion {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+}
+/* Target the Gradio wrapper divs around each accordion */
+#lo_metadata_accordion > div,
+#lo_settings_accordion > div,
+#lo_cleanup_accordion > div {
+    margin: 0 !important;
+}
+/* Shrink the gap in whatever flex/column container holds these three accordions */
+#lo_metadata_accordion ~ #lo_settings_accordion,
+#lo_settings_accordion ~ #lo_cleanup_accordion {
+    margin-top: -6px !important;
+}
+/* Also target the svelte gap containers that Gradio injects around accordions */
+#lo_accordion .block.padded > .gap,
+#lo_accordion .padding > .gap,
+#lo_accordion .block.padded > [class*="gap"],
+#lo_accordion .padding > [class*="gap"] {
+    gap: 2px !important;
+    row-gap: 2px !important;
+}
+#lo_cleanup_report textarea {
+    max-height: 12rem !important;
+    overflow-y: scroll !important;
+    scrollbar-gutter: stable !important;
+    resize: vertical !important;
 }
 /* Restore vertical scrollbar on the listbox containers explicitly */
 #lo_grp_radio, #lo_lora_radio, #lo_lora_list {
@@ -528,6 +565,11 @@ THUMB_CYCLE_NONE = "Do not cycle thumbnail images"
 PLACEMENT_MAIN = "Below the prompt in the main tab"
 PLACEMENT_LORA_TAB = "In the lora tab"
 PLACEMENT_OWN_TAB = "In its own tab"
+CLEANUP_SCOPE_CURRENT = "Cleanup data of the current model"
+CLEANUP_SCOPE_ALL = "Cleanup data of all models"
+CLEANUP_KIND_BOTH = "Cleanup lora metadata + preview images"
+CLEANUP_KIND_METADATA = "Cleanup lora metadata"
+CLEANUP_KIND_IMAGES = "Cleanup preview images"
 AUTO_SORT_NONE = "Do not auto-sort"
 AUTO_SORT_NAME = "Auto-sort by name (disables manual sorting)"
 AUTO_SORT_MOST_USED = "Auto-sort by most used (disables manual sorting)"
@@ -858,27 +900,33 @@ def _sanitize_filename_part(value: str) -> str:
     return cleaned or "preview"
 
 
-def _preview_rel_to_abs(path: str) -> str:
+def _preview_rel_to_abs(path: str, lora_dir: str = "") -> str:
     if not path:
         return ""
-    if os.path.isabs(path):
-        return path
-    return os.path.join(_plugin_dir(), path)
+    raw = str(path).strip()
+    if not raw:
+        return ""
+
+    # For any stored value, keep only the filename and resolve it exclusively
+    # from the current model image folder.
+    file_name = os.path.basename(raw.replace("\\", "/"))
+    if not file_name:
+        return ""
+    if lora_dir:
+        return os.path.join(_preview_images_dir(lora_dir), file_name)
+    return file_name
 
 
 def _preview_abs_to_rel(path: str) -> str:
     if not path:
         return ""
-    try:
-        return os.path.relpath(path, _plugin_dir())
-    except Exception:
-        return path
+    return os.path.basename(path)
 
 
-def _preview_images_for_entry(entry: dict) -> list[str]:
+def _preview_images_for_entry(entry: dict, lora_dir: str = "") -> list[str]:
     images = []
     for raw in entry.get("preview_images", []) or []:
-        abs_path = _preview_rel_to_abs(str(raw))
+        abs_path = _preview_rel_to_abs(str(raw), lora_dir)
         if abs_path and os.path.isfile(abs_path):
             images.append(abs_path)
     return images
@@ -888,7 +936,7 @@ def _preview_gallery_value(real_name: str, lora_dir: str) -> list[str]:
     if not real_name or not lora_dir:
         return []
     entry = _load_data(lora_dir)["loras"].get(real_name, {})
-    return _preview_images_for_entry(entry)
+    return _preview_images_for_entry(entry, lora_dir)
 
 
 def _preview_image_url(path: str) -> str:
@@ -897,16 +945,16 @@ def _preview_image_url(path: str) -> str:
     return _gradio_file_url(path)
 
 
-def _first_preview_image_data_uri(entry: dict) -> str:
-    images = _preview_images_for_entry(entry)
+def _first_preview_image_data_uri(entry: dict, lora_dir: str = "") -> str:
+    images = _preview_images_for_entry(entry, lora_dir)
     if not images:
         return ""
     return _preview_image_url(images[0])
 
 
-def _preview_image_urls_for_entry(entry: dict) -> list[str]:
+def _preview_image_urls_for_entry(entry: dict, lora_dir: str = "") -> list[str]:
     urls = []
-    for path in _preview_images_for_entry(entry):
+    for path in _preview_images_for_entry(entry, lora_dir):
         url = _preview_image_url(path)
         if url:
             urls.append(url)
@@ -1178,6 +1226,175 @@ def _save_data(lora_dir: str, data: dict) -> None:
         pass
 
 
+def _load_data_from_path(path: str) -> dict:
+    if path and os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            data["groups"] = _normalize_groups(data.get("groups", []))
+            data.setdefault("loras", {})
+            data.setdefault("lora_order", {})
+            data.setdefault("last_group", ALL_GROUP)
+            return data
+        except Exception:
+            pass
+    return _empty_data()
+
+
+def _save_data_to_path(path: str, data: dict) -> None:
+    if not path:
+        return
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def _cleanup_targets(current_lora_dir: str, scope: str) -> list[tuple[str, str, str]]:
+    data_dir = _data_dir()
+    if scope == CLEANUP_SCOPE_CURRENT:
+        if not current_lora_dir:
+            return []
+        return [(
+            _model_folder_name(current_lora_dir),
+            current_lora_dir,
+            _data_path_for_dir(current_lora_dir),
+        )]
+
+    parent_dir = os.path.dirname(os.path.normpath(current_lora_dir)) if current_lora_dir else ""
+    targets = []
+    try:
+        for name in sorted(os.listdir(data_dir)):
+            if not name.lower().endswith(".json"):
+                continue
+            if name == SETTINGS_FILENAME:
+                continue
+            model_name = os.path.splitext(name)[0]
+            json_path = os.path.join(data_dir, name)
+            lora_dir = os.path.join(parent_dir, model_name) if parent_dir else ""
+            targets.append((model_name, lora_dir, json_path))
+    except Exception:
+        pass
+    return targets
+
+
+def _scan_cleanup_plan(current_lora_dir: str, scope: str, cleanup_metadata: bool, cleanup_images: bool) -> dict:
+    plan = {"metadata": [], "images": []}
+    for model_name, lora_dir, json_path in _cleanup_targets(current_lora_dir, scope):
+        data = _load_data_from_path(json_path)
+        scanned = set(_scan_dir(lora_dir))
+
+        if cleanup_metadata:
+            for real_name in sorted(data.get("loras", {}).keys()):
+                if real_name not in scanned:
+                    plan["metadata"].append({
+                        "model": model_name,
+                        "real_name": real_name,
+                        "json_path": json_path,
+                    })
+
+        if cleanup_images:
+            referenced_images = set()
+            for real_name, entry in data.get("loras", {}).items():
+                if real_name not in scanned:
+                    continue
+                for raw in entry.get("preview_images", []) or []:
+                    abs_path = _preview_rel_to_abs(str(raw), lora_dir)
+                    if abs_path:
+                        referenced_images.add(os.path.normcase(os.path.normpath(abs_path)))
+
+            image_dir = os.path.join(_data_dir(), "images", model_name)
+            if os.path.isdir(image_dir):
+                try:
+                    for file_name in sorted(os.listdir(image_dir)):
+                        abs_path = os.path.join(image_dir, file_name)
+                        if not os.path.isfile(abs_path):
+                            continue
+                        norm_path = os.path.normcase(os.path.normpath(abs_path))
+                        if norm_path not in referenced_images:
+                            plan["images"].append({
+                                "model": model_name,
+                                "path": abs_path,
+                            })
+                except Exception:
+                    pass
+    return plan
+
+
+def _cleanup_kind_flags(kind: str) -> tuple[bool, bool]:
+    if kind == CLEANUP_KIND_METADATA:
+        return True, False
+    if kind == CLEANUP_KIND_IMAGES:
+        return False, True
+    return True, True
+
+
+def _cleanup_report_text(plan: dict, cleanup_kind: str) -> str:
+    metadata_items = plan.get("metadata", []) or []
+    image_items = plan.get("images", []) or []
+    cleanup_metadata, cleanup_images = _cleanup_kind_flags(cleanup_kind)
+    if not metadata_items and not image_items:
+        if cleanup_metadata and cleanup_images:
+            return "No orphaned lora metadata or preview images were found."
+        if cleanup_metadata:
+            return "No orphaned lora metadata was found."
+        return "No orphaned preview images were found."
+
+    lines = []
+    if metadata_items:
+        lines.append("Orphaned lora metadata:")
+        for item in metadata_items:
+            lines.append(f"- [{item['model']}] {item['real_name']}")
+        lines.append("")
+    if image_items:
+        lines.append("Orphaned preview images:")
+        for item in image_items:
+            lines.append(f"- [{item['model']}] {os.path.basename(item['path'])}")
+        lines.append("")
+    lines.append("Press Confirm Cleanup to continue.")
+    return "\n".join(lines).strip()
+
+
+def _apply_cleanup_plan(plan: dict) -> dict:
+    metadata_items = plan.get("metadata", []) or []
+    image_items = plan.get("images", []) or []
+
+    metadata_by_json: dict[str, set[str]] = {}
+    for item in metadata_items:
+        metadata_by_json.setdefault(item["json_path"], set()).add(item["real_name"])
+
+    removed_metadata = 0
+    removed_images = 0
+
+    for json_path, missing_names in metadata_by_json.items():
+        data = _load_data_from_path(json_path)
+        changed = False
+        for real_name in list(missing_names):
+            if real_name in data.get("loras", {}):
+                del data["loras"][real_name]
+                removed_metadata += 1
+                changed = True
+        if changed:
+            for order_key, ordered_names in list(data.get("lora_order", {}).items()):
+                data["lora_order"][order_key] = [name for name in ordered_names if name not in missing_names]
+            _save_data_to_path(json_path, data)
+
+    for item in image_items:
+        path = item["path"]
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+                removed_images += 1
+        except Exception:
+            pass
+
+    return {
+        "removed_metadata": removed_metadata,
+        "removed_images": removed_images,
+    }
+
+
 def _scan_dir(lora_dir: str) -> list:
     lora_exts = {".safetensors", ".pt", ".pth", ".ckpt"}
     if not lora_dir or not os.path.isdir(lora_dir):
@@ -1398,7 +1615,8 @@ def _pick_selected_lora(settings: dict, lora_dir: str, grp: str | None, lo_choic
 
 
 def _lora_list_html(data: dict, loras: list, selected: str | None, reveal_selected: bool = False,
-                    view_mode: str | None = None, thumbnail_columns: int | None = None) -> str:
+                    view_mode: str | None = None, thumbnail_columns: int | None = None,
+                    lora_dir: str = "") -> str:
     settings = _load_settings()
     view_mode = _normalize_lora_view_mode(
         view_mode if view_mode is not None else settings.get("lora_view_mode")
@@ -1435,7 +1653,7 @@ def _lora_list_html(data: dict, loras: list, selected: str | None, reveal_select
         selected_cls = " is-selected" if real_name == selected else ""
         thumb_html = ""
         if view_mode == LORA_VIEW_THUMBNAIL:
-            preview_urls = _preview_image_urls_for_entry(data["loras"].get(real_name, {}))
+            preview_urls = _preview_image_urls_for_entry(data["loras"].get(real_name, {}), lora_dir)
             thumb_uri = (preview_urls[0] if preview_urls else "") or default_thumb
         else:
             preview_urls = []
@@ -2323,7 +2541,7 @@ def _use_both_button_state(real_name: str | None, saved_dir: str, all_loras: lis
 class LoraOrganizerPlugin(WAN2GPPlugin):
 
     name        = "Lora Organizer"
-    version     = "1.01"
+    version     = "1.12"
 
     def __init__(self):
         super().__init__()
@@ -2516,7 +2734,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
         init_lora_html = _lora_list_html(
             init_data, init_lora_list, init_sel_lora,
             reveal_selected=True, view_mode=init_view_mode,
-            thumbnail_columns=init_thumbnail_columns,
+            thumbnail_columns=init_thumbnail_columns, lora_dir=init_lora_dir,
         )
         init_active_loras = []
         if loras_comp is not None:
@@ -2691,7 +2909,8 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                                                   elem_id="lo_real_name_tb",
                                                   scale=1, min_width=0)
                 tw_tb   = gr.Textbox(label="Trigger Words",
-                                     placeholder="e.g. ohwx, cinematic", interactive=True)
+                                     placeholder="e.g. ohwx, cinematic", interactive=True,
+                                     lines=1, max_lines=6)
                 str_tb  = gr.Textbox(label="Default Strength", value="1",
                                      placeholder="e.g. 1  or  1;0  or  0;1", interactive=True)
                 info_tb = gr.Textbox(label="Info / Notes", lines=3,
@@ -2739,11 +2958,38 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                                                    interactive=False, elem_id="lo_btn_preview_remove")
                     btn_preview_clear = gr.Button("❌ Clear All", size="sm", min_width=0,
                                                   interactive=False, elem_id="lo_btn_preview_clear")
+                with gr.Row(visible=False) as edit_row:
+                    btn_save_edit   = gr.Button("✔ Save Changes",   variant="primary", size="sm",
+                                                elem_id="lo_btn_save_edit")
+                    btn_cancel_edit = gr.Button("✖ Cancel", size="sm", elem_id="lo_btn_cancel_edit")
+                with gr.Accordion("🧹 Cleanup Metadata and Images for Missing Loras", open=False, elem_id="lo_cleanup_accordion"):
+                    cleanup_scope_dd = gr.Dropdown(
+                        choices=[CLEANUP_SCOPE_ALL, CLEANUP_SCOPE_CURRENT],
+                        value=CLEANUP_SCOPE_ALL,
+                        label="Cleanup scope",
+                        interactive=True,
+                    )
+                    cleanup_kind_dd = gr.Dropdown(
+                        choices=[CLEANUP_KIND_BOTH, CLEANUP_KIND_METADATA, CLEANUP_KIND_IMAGES],
+                        value=CLEANUP_KIND_BOTH,
+                        label="Cleanup type",
+                        interactive=True,
+                    )
+                    cleanup_report_tb = gr.Textbox(
+                        label="Cleanup scan results",
+                        lines=10,
+                        interactive=False,
+                        value="",
+                        autoscroll=False,
+                        elem_id="lo_cleanup_report",
+                    )
+                    with gr.Row():
+                        btn_cleanup_scan = gr.Button("🔎 Scan", size="sm", variant="primary",
+                                                     elem_id="lo_btn_cleanup_scan")
+                        btn_cleanup_confirm = gr.Button("✔ Confirm Cleanup", size="sm", variant="primary",
+                                                        visible=False, elem_id="lo_btn_cleanup_confirm")
+                        btn_cleanup_cancel = gr.Button("Cancel", size="sm", visible=False, elem_id="lo_btn_cleanup_cancel")
 
-            with gr.Row(visible=False) as edit_row:
-                btn_save_edit   = gr.Button("✔ Save Changes",   variant="primary", size="sm",
-                                            elem_id="lo_btn_save_edit")
-                btn_cancel_edit = gr.Button("✖ Cancel", size="sm", elem_id="lo_btn_cancel_edit")
 
             # ── Settings ──────────────────────────────────────────────
             with gr.Accordion("⚙️ Settings", open=False, elem_id="lo_settings_accordion"):
@@ -2806,7 +3052,6 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                                               label="Arrange group and lora listboxes side by side (requires restart)")
                 btn_save_settings = gr.Button("💾 Save Settings", size="sm", variant="primary",
                                               elem_id="lo_btn_save_settings")
-
             with gr.Column(visible=False):
                 lora_radio = gr.Textbox(value=init_sel_lora or "", elem_id="lo_lora_radio")
                 lora_select_dispatch = gr.Button("dispatch", elem_id="lo_lora_select_dispatch")
@@ -2821,6 +3066,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             st_sel_lora = gr.State(init_sel_lora)
             st_preview_work = gr.State(_preview_gallery_value(init_sel_lora, init_lora_dir))
             st_preview_index = gr.State(None)
+            st_preview_upload_open = gr.State(False)
             st_preview_expanded = gr.State(False)
             st_clear_loras = gr.State([])
             st_clear_mult = gr.State("")
@@ -2831,6 +3077,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             st_active_apply_mult = gr.State(None)
             st_active_reorder_pending = gr.State(False)
             st_active_selected = gr.State(init_active_selected)
+            st_cleanup_plan = gr.State(None)
 
 
         # ==============================================================
@@ -2867,21 +3114,23 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 interactive=has_images,
             )
 
-        def _preview_manage_updates(real_name: str, lora_dir: str, show_upload: bool = False, expanded: bool = False):
+        def _preview_manage_updates(real_name: str, lora_dir: str, show_upload: bool = False,
+                                    expanded: bool = False, clear_upload: bool = True):
             images = _preview_gallery_value(real_name, lora_dir)
-            return _preview_manage_updates_from_images(real_name, images, None, show_upload, expanded)
+            return _preview_manage_updates_from_images(real_name, images, None, show_upload, expanded, clear_upload)
 
         def _preview_manage_updates_from_images(real_name: str, images: list[str], selected_index: int | None = None,
-                                                show_upload: bool = False, expanded: bool = False):
+                                                show_upload: bool = False, expanded: bool = False,
+                                                clear_upload: bool = True):
             has_selection = bool(real_name)
             has_images = bool(images)
             valid_idx = selected_index if isinstance(selected_index, int) and 0 <= selected_index < len(images) else None
             gallery_height = PREVIEW_GALLERY_EXPANDED_HEIGHT if expanded else PREVIEW_GALLERY_COMPACT_HEIGHT
             return (
                 gr.update(value=images, visible=has_images, selected_index=valid_idx, height=gallery_height),
-                gr.update(value=None, visible=show_upload),
+                gr.update(value=None, visible=show_upload) if clear_upload else gr.update(visible=show_upload),
                 gr.update(visible=has_selection),
-                gr.update(visible=has_selection, interactive=has_selection),
+                gr.update(visible=has_selection, interactive=has_selection and not show_upload),
                 _preview_expand_button_update(has_images, expanded),
                 gr.update(visible=has_images, interactive=valid_idx is not None and valid_idx > 0),
                 gr.update(visible=has_images, interactive=valid_idx is not None and valid_idx < len(images) - 1),
@@ -2914,14 +3163,6 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             cur_loras = forced_loras if forced_loras is not None else _scan_dir(lora_dir)
             data      = _load_data(lora_dir)
             settings  = _load_settings()
-            # Only prune stale entries when we have a confirmed lora list
-            if cur_loras:
-                cur_set = set(cur_loras)
-                removed = [k for k in list(data["loras"].keys()) if k not in cur_set]
-                if removed:
-                    for k in removed:
-                        del data["loras"][k]
-                    _save_data(lora_dir, data)
             last_grp = data.get("last_group", ALL_GROUP)
             if last_grp not in [ALL_GROUP] + _group_names(data):
                 last_grp = ALL_GROUP
@@ -2936,7 +3177,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 gr.update(choices=(_lo_c:=_group_choices(data)), value=_find_choice_val(_lo_c, last_grp)),
                 *bstates,
                 gr.update(value=sel_lora or ""),
-                gr.update(value=_lora_list_html(data, loras_in, sel_lora, reveal_selected=True)),
+                gr.update(value=_lora_list_html(data, loras_in, sel_lora, reveal_selected=True, lora_dir=lora_dir)),
                 gr.update(value=_activated_loras_html(lora_dir, active_values, active_mult, cur_loras)),
                 gr.update(choices=_assign_choices(cur_loras), value=None, visible=False),
                 *_metadata_updates(sel_lora, lora_dir, False),
@@ -2956,10 +3197,16 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 _preview_gallery_value(sel_lora, lora_dir),
                 None,
                 False,
+                False,
                 [],
                 "",
                 "",
                 False,
+                None,
+                gr.update(value=""),
+                gr.update(value="🔎 Scan", interactive=True),
+                gr.update(visible=False),
+                gr.update(visible=False),
                 None,
             )
 
@@ -2975,7 +3222,9 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             lora_manage_row, btn_lora_sort, btn_lora_sort_used,
             btn_manage_group, group_manage_row, btn_add_sub,
             st_dir, st_loras, st_sel_lora, st_preview_work, st_preview_index, st_preview_expanded,
+            st_preview_upload_open,
             st_clear_loras, st_clear_mult, st_clear_prompt, st_clear_mode, st_clear_expected,
+            cleanup_report_tb, btn_cleanup_scan, btn_cleanup_confirm, btn_cleanup_cancel, st_cleanup_plan,
         ]
 
         # ==============================================================
@@ -3174,7 +3423,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             return (
                 *_btn_states(grp, data["groups"]),
                 gr.update(value=sel_lora or ""),
-                gr.update(value=_lora_list_html(data, loras, sel_lora, reveal_selected=True)),
+                gr.update(value=_lora_list_html(data, loras, sel_lora, reveal_selected=True, lora_dir=saved_dir)),
                 gr.update(interactive=has_lora and not already),          # btn_use
                 _clear_button_update(curr_act or [], False),              # btn_clear_all
                 gr.update(interactive=has_lora),                          # btn_reorder_loras
@@ -3264,6 +3513,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 _preview_gallery_value(real_name, saved_dir),
                 None,
                 False,
+                False,
             )
 
         _curr_act_input = loras_comp if loras_comp is not None else gr.State([])
@@ -3273,9 +3523,9 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                                             url_tb, url_btn_row, preview_gallery, preview_upload, preview_manage_row,
                                             btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
                                             edit_row, btn_use_both,
-                                            btn_use, btn_clear_all, btn_reorder_loras,
-                                            btn_lora_sort, btn_lora_sort_used, btn_lora_done,
-                                            st_dir, st_sel_lora, st_preview_work, st_preview_index, st_preview_expanded],
+                     btn_use, btn_clear_all, btn_reorder_loras,
+                     btn_lora_sort, btn_lora_sort_used, btn_lora_done,
+                                            st_dir, st_sel_lora, st_preview_work, st_preview_index, st_preview_expanded, st_preview_upload_open],
                                    show_progress="hidden")
 
         def on_lora_ui_action(payload, saved_dir, cur_loras, curr_act, grp, curr_selected):
@@ -3345,6 +3595,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 _preview_gallery_value(real_name, saved_dir),
                 None,
                 False,
+                False,
             )
 
         lora_ui_dispatch.click(
@@ -3356,7 +3607,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                      edit_row, btn_use_both,
                      btn_use, btn_clear_all, btn_reorder_loras,
                      btn_lora_sort, btn_lora_sort_used, btn_lora_done,
-                     st_dir, st_sel_lora, st_preview_work, st_preview_index, st_preview_expanded],
+                     st_dir, st_sel_lora, st_preview_work, st_preview_index, st_preview_expanded, st_preview_upload_open],
             show_progress="hidden"
         )
 
@@ -3544,7 +3795,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             return (
                 gr.update(visible=False),
                 gr.update(value=selected or ""),
-                gr.update(value=_lora_list_html(data, loras, selected)),
+                gr.update(value=_lora_list_html(data, loras, selected, lora_dir=saved_dir)),
                 sort_u,
                 sort_used_u,
                 done_u,
@@ -3655,7 +3906,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             return (
                 gr.update(choices=(_lo_c:=_group_choices(data)), value=_find_choice_val(_lo_c, selected)),
                 gr.update(value=lo_choices[0][1] if lo_choices else ""),
-                gr.update(value=_lora_list_html(data, loras, lo_choices[0][1] if lo_choices else None, reveal_selected=True)),
+                gr.update(value=_lora_list_html(data, loras, lo_choices[0][1] if lo_choices else None, reveal_selected=True, lora_dir=saved_dir)),
                 gr.update(visible=False),
                 "add",
                 gr.update(interactive=True),
@@ -3704,7 +3955,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             return (
                 gr.update(choices=(_lo_c:=_group_choices(data)), value=_find_choice_val(_lo_c, next_grp)),
                 gr.update(value=lo_choices[0][1] if lo_choices else ""),
-                gr.update(value=_lora_list_html(data, loras, lo_choices[0][1] if lo_choices else None, reveal_selected=True)),
+                gr.update(value=_lora_list_html(data, loras, lo_choices[0][1] if lo_choices else None, reveal_selected=True, lora_dir=saved_dir)),
                 *_btn_states(next_grp, data["groups"]),
                 gr.update(interactive=False),
                 gr.update(visible=False),
@@ -3761,7 +4012,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             )
             return (
                 gr.update(value=selected or ""),
-                gr.update(value=_lora_list_html(data, ordered, selected)),
+                gr.update(value=_lora_list_html(data, ordered, selected, lora_dir=saved_dir)),
                 sort_u,
                 sort_used_u,
                 done_u,
@@ -3788,7 +4039,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             )
             return (
                 gr.update(value=selected or ""),
-                gr.update(value=_lora_list_html(data, ordered, selected)),
+                gr.update(value=_lora_list_html(data, ordered, selected, lora_dir=saved_dir)),
                 sort_u,
                 sort_used_u,
                 done_u,
@@ -3838,7 +4089,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             lo_choices = _lora_choices_for_radio(data, loras)
             return (gr.update(visible=False), gr.update(visible=False),
                     gr.update(value=lo_choices[0][1] if lo_choices else ""),
-                    gr.update(value=_lora_list_html(data, loras, lo_choices[0][1] if lo_choices else None)),
+                    gr.update(value=_lora_list_html(data, loras, lo_choices[0][1] if lo_choices else None, lora_dir=saved_dir)),
                     saved_dir,
                     lo_choices[0][1] if lo_choices else None)
 
@@ -3939,7 +4190,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 group_loras = _loras_for_group(data, cur_grp or ALL_GROUP, all_l)
                 if selected_after not in group_loras:
                     selected_after = group_loras[0] if group_loras else None
-                sort_html_update = gr.update(value=_lora_list_html(data, group_loras, selected_after))
+                sort_html_update = gr.update(value=_lora_list_html(data, group_loras, selected_after, lora_dir=saved_dir))
             # Save last used lora for this group in Settings.json (safe — no lora data)
             if not already:
                 data    = _load_data(saved_dir)
@@ -3987,7 +4238,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 group_loras = _loras_for_group(data, cur_grp or ALL_GROUP, all_l)
                 if selected_after not in group_loras:
                     selected_after = group_loras[0] if group_loras else None
-                sort_html_update = gr.update(value=_lora_list_html(data, group_loras, selected_after))
+                sort_html_update = gr.update(value=_lora_list_html(data, group_loras, selected_after, lora_dir=saved_dir))
             # Save last used lora (the one selected in the listbox)
             data    = _load_data(saved_dir)
             cur_grp = data.get("last_group", ALL_GROUP)
@@ -4112,111 +4363,122 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
         for tb in (disp_name_tb, tw_tb, str_tb, info_tb, url_tb):
             tb.input(fn=_show_metadata_actions, inputs=[lora_radio], outputs=[edit_row])
         preview_upload.change(
-            fn=lambda files: gr.update(visible=bool(files)),
+            fn=lambda files: (gr.update(visible=bool(files)), bool(files)),
             inputs=[preview_upload],
-            outputs=[edit_row],
+            outputs=[edit_row, st_preview_upload_open],
         )
         btn_preview_add.click(
-            fn=lambda real_name: (gr.update(visible=True), gr.update(visible=bool(real_name))),
+            fn=lambda real_name: (
+                gr.update(visible=True),
+                gr.update(visible=bool(real_name)),
+                gr.update(interactive=False),
+                True,
+            ),
             inputs=[lora_radio],
-            outputs=[preview_upload, edit_row],
+            outputs=[preview_upload, edit_row, btn_preview_add, st_preview_upload_open],
         )
 
-        def on_preview_select(real_name, preview_work, expanded, evt: gr.SelectData):
+        def on_preview_select(real_name, preview_work, expanded, upload_open, evt: gr.SelectData):
             idx = evt.index if evt else None
             try:
                 idx = int(idx) if idx is not None else None
             except Exception:
                 idx = None
-            return (*_preview_manage_updates_from_images(real_name, list(preview_work or []), idx, False, bool(expanded)), idx, bool(expanded))
+            return (
+                *_preview_manage_updates_from_images(real_name, list(preview_work or []), idx, bool(upload_open), bool(expanded), False),
+                idx,
+                bool(expanded),
+                bool(upload_open),
+            )
 
         preview_gallery.select(
             fn=on_preview_select,
-            inputs=[lora_radio, st_preview_work, st_preview_expanded],
+            inputs=[lora_radio, st_preview_work, st_preview_expanded, st_preview_upload_open],
             outputs=[preview_gallery, preview_upload, preview_manage_row,
                      btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
-                     st_preview_index, st_preview_expanded],
+                     st_preview_index, st_preview_expanded, st_preview_upload_open],
         )
 
-        def move_preview(real_name, preview_work, preview_index, expanded, delta):
+        def move_preview(real_name, preview_work, preview_index, expanded, upload_open, delta):
             images = list(preview_work or [])
             if not real_name or preview_index is None:
-                return (*_preview_manage_updates_from_images(real_name, images, None, False, bool(expanded)), images, None, bool(expanded), gr.update())
+                return (*_preview_manage_updates_from_images(real_name, images, None, bool(upload_open), bool(expanded), False), images, None, bool(expanded), bool(upload_open), gr.update())
             try:
                 idx = int(preview_index)
             except Exception:
                 idx = None
             if idx is None or idx < 0 or idx >= len(images):
-                return (*_preview_manage_updates_from_images(real_name, images, None, False, bool(expanded)), images, None, bool(expanded), gr.update())
+                return (*_preview_manage_updates_from_images(real_name, images, None, bool(upload_open), bool(expanded), False), images, None, bool(expanded), bool(upload_open), gr.update())
             new_idx = idx + delta
             if new_idx < 0 or new_idx >= len(images):
-                return (*_preview_manage_updates_from_images(real_name, images, idx, False, bool(expanded)), images, idx, bool(expanded), gr.update())
+                return (*_preview_manage_updates_from_images(real_name, images, idx, bool(upload_open), bool(expanded), False), images, idx, bool(expanded), bool(upload_open), gr.update())
             item = images.pop(idx)
             images.insert(new_idx, item)
-            return (*_preview_manage_updates_from_images(real_name, images, new_idx, False, bool(expanded)), images, new_idx, bool(expanded), gr.update(visible=True))
+            return (*_preview_manage_updates_from_images(real_name, images, new_idx, bool(upload_open), bool(expanded), False), images, new_idx, bool(expanded), bool(upload_open), gr.update(visible=True))
 
         btn_preview_left.click(
-            fn=lambda rn, pw, pi, pe: move_preview(rn, pw, pi, pe, -1),
-            inputs=[lora_radio, st_preview_work, st_preview_index, st_preview_expanded],
+            fn=lambda rn, pw, pi, pe, puo: move_preview(rn, pw, pi, pe, puo, -1),
+            inputs=[lora_radio, st_preview_work, st_preview_index, st_preview_expanded, st_preview_upload_open],
             outputs=[preview_gallery, preview_upload, preview_manage_row,
                      btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
-                     st_preview_work, st_preview_index, st_preview_expanded, edit_row],
+                     st_preview_work, st_preview_index, st_preview_expanded, st_preview_upload_open, edit_row],
         )
         btn_preview_right.click(
-            fn=lambda rn, pw, pi, pe: move_preview(rn, pw, pi, pe, 1),
-            inputs=[lora_radio, st_preview_work, st_preview_index, st_preview_expanded],
+            fn=lambda rn, pw, pi, pe, puo: move_preview(rn, pw, pi, pe, puo, 1),
+            inputs=[lora_radio, st_preview_work, st_preview_index, st_preview_expanded, st_preview_upload_open],
             outputs=[preview_gallery, preview_upload, preview_manage_row,
                      btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
-                     st_preview_work, st_preview_index, st_preview_expanded, edit_row],
+                     st_preview_work, st_preview_index, st_preview_expanded, st_preview_upload_open, edit_row],
         )
 
-        def remove_preview(real_name, preview_work, preview_index, expanded):
+        def remove_preview(real_name, preview_work, preview_index, expanded, upload_open):
             images = list(preview_work or [])
             if not real_name or preview_index is None:
-                return (*_preview_manage_updates_from_images(real_name, images, None, False, bool(expanded)), images, None, bool(expanded), gr.update())
+                return (*_preview_manage_updates_from_images(real_name, images, None, bool(upload_open), bool(expanded), False), images, None, bool(expanded), bool(upload_open), gr.update())
             try:
                 idx = int(preview_index)
             except Exception:
                 idx = None
             if idx is None or idx < 0 or idx >= len(images):
-                return (*_preview_manage_updates_from_images(real_name, images, None, False, bool(expanded)), images, None, bool(expanded), gr.update())
+                return (*_preview_manage_updates_from_images(real_name, images, None, bool(upload_open), bool(expanded), False), images, None, bool(expanded), bool(upload_open), gr.update())
             del images[idx]
             next_idx = min(idx, len(images) - 1) if images else None
-            return (*_preview_manage_updates_from_images(real_name, images, next_idx, False, bool(expanded)), images, next_idx, bool(expanded), gr.update(visible=True))
+            return (*_preview_manage_updates_from_images(real_name, images, next_idx, bool(upload_open), bool(expanded), False), images, next_idx, bool(expanded), bool(upload_open), gr.update(visible=True))
 
         btn_preview_remove.click(
             fn=remove_preview,
-            inputs=[lora_radio, st_preview_work, st_preview_index, st_preview_expanded],
+            inputs=[lora_radio, st_preview_work, st_preview_index, st_preview_expanded, st_preview_upload_open],
             outputs=[preview_gallery, preview_upload, preview_manage_row,
                      btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
-                     st_preview_work, st_preview_index, st_preview_expanded, edit_row],
+                     st_preview_work, st_preview_index, st_preview_expanded, st_preview_upload_open, edit_row],
         )
 
         def clear_preview(real_name):
-            return (*_preview_manage_updates_from_images(real_name, [], None, False, False), [], None, False, gr.update(visible=bool(real_name)))
+            return (*_preview_manage_updates_from_images(real_name, [], None, False, False), [], None, False, False, gr.update(visible=bool(real_name)))
 
         btn_preview_clear.click(
             fn=clear_preview,
             inputs=[lora_radio],
             outputs=[preview_gallery, preview_upload, preview_manage_row,
                      btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
-                     st_preview_work, st_preview_index, st_preview_expanded, edit_row],
+                     st_preview_work, st_preview_index, st_preview_expanded, st_preview_upload_open, edit_row],
         )
 
-        def toggle_preview_expand(real_name, preview_work, preview_index, expanded):
+        def toggle_preview_expand(real_name, preview_work, preview_index, expanded, upload_open):
             next_expanded = not bool(expanded)
             images = list(preview_work or [])
             return (
-                *_preview_manage_updates_from_images(real_name, images, preview_index, False, next_expanded),
+                *_preview_manage_updates_from_images(real_name, images, preview_index, bool(upload_open), next_expanded, False),
                 next_expanded,
+                bool(upload_open),
             )
 
         btn_preview_expand.click(
             fn=toggle_preview_expand,
-            inputs=[lora_radio, st_preview_work, st_preview_index, st_preview_expanded],
+            inputs=[lora_radio, st_preview_work, st_preview_index, st_preview_expanded, st_preview_upload_open],
             outputs=[preview_gallery, preview_upload, preview_manage_row,
                      btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
-                     st_preview_expanded],
+                     st_preview_expanded, st_preview_upload_open],
         )
 
         def save_edit(real_name, disp_name, tw, strength, info_text, url, preview_files, preview_work, cur_grp, saved_dir, cur_loras):
@@ -4239,7 +4501,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                     all_l = cur_loras if cur_loras else live_loras(saved_dir)
                     _apply_lora_auto_sort(data, all_l, AUTO_SORT_NAME, cur_grp, include_all_group=True)
                 entry = _ensure_lora(data, real_name, saved_dir)
-                current_images = _preview_images_for_entry(entry)
+                current_images = _preview_images_for_entry(entry, saved_dir)
                 kept_images = [p for p in (preview_work or []) if p in current_images and os.path.isfile(p)]
                 removed_images = [p for p in current_images if p not in kept_images]
                 new_images = _copy_preview_uploads(saved_dir, real_name, preview_files)
@@ -4262,11 +4524,12 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 *_metadata_updates(real_name or "", saved_dir, False),
                 pair_btn_u,
                 gr.update(value=safe_val or ""),
-                gr.update(value=_lora_list_html(data, loras, safe_val)),
+                gr.update(value=_lora_list_html(data, loras, safe_val, lora_dir=saved_dir)),
                 saved_dir,
                 safe_val,
                 _preview_gallery_value(safe_val, saved_dir),
                 None,
+                False,
                 False,
             )
 
@@ -4277,7 +4540,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                                      url_tb, url_btn_row, preview_gallery, preview_upload, preview_manage_row,
                                      btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
                                      edit_row,
-                                     btn_use_both, lora_radio, lora_list_html, st_dir, st_sel_lora, st_preview_work, st_preview_index, st_preview_expanded])
+                                     btn_use_both, lora_radio, lora_list_html, st_dir, st_sel_lora, st_preview_work, st_preview_index, st_preview_expanded, st_preview_upload_open])
 
         def cancel_edit(real_name, saved_dir, cur_loras):
             pair_btn_u = _use_both_button_state(real_name, saved_dir, cur_loras if cur_loras else live_loras(saved_dir))
@@ -4286,10 +4549,11 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             return (*_metadata_updates(real_name or "", saved_dir, False),
                     pair_btn_u,
                     gr.update(value=real_name),
-                    gr.update(value=_lora_list_html(data, loras, real_name)),
+                    gr.update(value=_lora_list_html(data, loras, real_name, lora_dir=saved_dir)),
                     saved_dir,
                     _preview_gallery_value(real_name, saved_dir),
                     None,
+                    False,
                     False)
 
         btn_cancel_edit.click(fn=cancel_edit, inputs=[lora_radio, st_dir, st_loras],
@@ -4297,13 +4561,63 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                                        url_tb, url_btn_row, preview_gallery, preview_upload, preview_manage_row,
                                        btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
                                        edit_row,
-                                       btn_use_both, lora_radio, lora_list_html, st_dir, st_preview_work, st_preview_index, st_preview_expanded])
+                                       btn_use_both, lora_radio, lora_list_html, st_dir, st_preview_work, st_preview_index, st_preview_expanded, st_preview_upload_open])
 
         # ── Open URL ───────────────────────────────────────────────────
         btn_open_url.click(
             fn=lambda url: url,
             inputs=[url_tb], outputs=[url_tb],
             js="(url) => { if(url && url.trim()) window.open(url.trim(), '_blank', 'noopener,noreferrer'); return url; }",
+        )
+
+        def handle_cleanup(scope, cleanup_kind, saved_dir, plan):
+            if plan:
+                result = _apply_cleanup_plan(plan)
+                lines = [
+                    "Cleanup completed.",
+                    f"- Removed lora metadata entries: {result['removed_metadata']}",
+                    f"- Removed preview images: {result['removed_images']}",
+                ]
+                return (
+                    gr.update(value="\n".join(lines)),
+                    gr.update(value="🔎 Scan", interactive=True),
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                    None,
+                )
+
+            cleanup_metadata, cleanup_images = _cleanup_kind_flags(cleanup_kind)
+            next_plan = _scan_cleanup_plan(saved_dir, scope, cleanup_metadata, cleanup_images)
+            has_items = bool(next_plan.get("metadata") or next_plan.get("images"))
+            return (
+                gr.update(value=_cleanup_report_text(next_plan, cleanup_kind)),
+                gr.update(value="🔎 Scan", interactive=not has_items),
+                gr.update(visible=has_items),
+                gr.update(visible=has_items),
+                next_plan if has_items else None,
+            )
+
+        btn_cleanup_scan.click(
+            fn=handle_cleanup,
+            inputs=[cleanup_scope_dd, cleanup_kind_dd, st_dir, st_cleanup_plan],
+            outputs=[cleanup_report_tb, btn_cleanup_scan, btn_cleanup_confirm, btn_cleanup_cancel, st_cleanup_plan],
+        )
+
+        btn_cleanup_confirm.click(
+            fn=handle_cleanup,
+            inputs=[cleanup_scope_dd, cleanup_kind_dd, st_dir, st_cleanup_plan],
+            outputs=[cleanup_report_tb, btn_cleanup_scan, btn_cleanup_confirm, btn_cleanup_cancel, st_cleanup_plan],
+        )
+
+        btn_cleanup_cancel.click(
+            fn=lambda: (
+                gr.update(value="Cleanup canceled."),
+                gr.update(value="🔎 Scan", interactive=True),
+                gr.update(visible=False),
+                gr.update(visible=False),
+                None,
+            ),
+            outputs=[cleanup_report_tb, btn_cleanup_scan, btn_cleanup_confirm, btn_cleanup_cancel, st_cleanup_plan],
         )
 
         # ── Settings: Save button ──────────────────────────────────────
@@ -4352,7 +4666,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 gr.update(choices=(_grp_choices:=_group_choices(data)),
                           value=_find_choice_val(_grp_choices, selected_grp)),    # grp_radio
                 gr.update(value=sel_lora or ""),                                  # lora_radio
-                gr.update(value=_lora_list_html(data, loras, sel_lora, reveal_selected=True, view_mode=view_mode, thumbnail_columns=thumbnail_columns)),          # lora_list_html
+                gr.update(value=_lora_list_html(data, loras, sel_lora, reveal_selected=True, view_mode=view_mode, thumbnail_columns=thumbnail_columns, lora_dir=saved_dir)),          # lora_list_html
                 sort_u,                                                          # btn_lora_sort
                 sort_used_u,                                                     # btn_lora_sort_used
                 btn_rename_u,                                                   # btn_rename
