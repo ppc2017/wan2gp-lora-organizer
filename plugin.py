@@ -3872,13 +3872,28 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
         def confirm_group(cur_grp, new_name, action, saved_dir):
             cur_grp = _grp_name(cur_grp)
             new_name = (new_name or "").strip()
-            if not new_name:
-                return (gr.update(), gr.update(), gr.update(visible=False), "add",
-                        gr.update(interactive=True), gr.update(interactive=True),
-                        gr.update(interactive=True), gr.update(interactive=True),
-                        saved_dir)
             data   = _load_data(saved_dir)
             groups = data["groups"]
+            selected_current = cur_grp if cur_grp in _group_names(data) else ALL_GROUP
+            current_loras = _scan_dir(saved_dir)
+            current_group_loras = _loras_for_group(data, selected_current, current_loras)
+            current_choices = _lora_choices_for_radio(data, current_group_loras)
+            current_selected_lora = current_choices[0][1] if current_choices else ""
+            current_is_all = (selected_current == ALL_GROUP)
+            if not new_name:
+                return (
+                    gr.update(choices=(_lo_c:=_group_choices(data)), value=_find_choice_val(_lo_c, selected_current)),
+                    gr.update(value=current_selected_lora),
+                    gr.update(value=_lora_list_html(data, current_group_loras, current_selected_lora or None, reveal_selected=True, lora_dir=saved_dir)),
+                    gr.update(visible=False),
+                    "add",
+                    gr.update(interactive=True),
+                    gr.update(interactive=not current_is_all),
+                    gr.update(interactive=not current_is_all),
+                    gr.update(interactive=not current_is_all),
+                    saved_dir,
+                    current_selected_lora or None,
+                )
             # Reject duplicate names (case-insensitive), also reject ALL_GROUP
             name_lower = new_name.lower()
             existing_lower = [g["name"].lower() for g in groups]
@@ -3891,10 +3906,19 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             )
             if is_duplicate:
                 gr.Warning(f"A group named '{new_name}' already exists.")
-                return (gr.update(), gr.update(), gr.update(visible=True), action,
-                        gr.update(interactive=False), gr.update(interactive=False),
-                        gr.update(interactive=False), gr.update(interactive=False),
-                        saved_dir)
+                return (
+                    gr.update(choices=(_lo_c:=_group_choices(data)), value=_find_choice_val(_lo_c, selected_current)),
+                    gr.update(value=current_selected_lora),
+                    gr.update(value=_lora_list_html(data, current_group_loras, current_selected_lora or None, reveal_selected=True, lora_dir=saved_dir)),
+                    gr.update(visible=True),
+                    action,
+                    gr.update(interactive=False),
+                    gr.update(interactive=False),
+                    gr.update(interactive=False),
+                    gr.update(interactive=False),
+                    saved_dir,
+                    current_selected_lora or None,
+                )
             if action == "add":
                 groups.append({"name": new_name, "parent": None, "level": 0})
                 data["groups"] = _normalize_groups(groups)
