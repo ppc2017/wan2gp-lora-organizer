@@ -11,7 +11,7 @@ It adds a UI that lets you organize loras into groups and subgroups, store metad
 - Create, rename, delete, and reorder groups.
 - Create nested subgroups.
 - Reorder loras with drag and drop.
-- Sort loras in the current group by name or by most used.
+- Sort loras by name or by most used.
 - Change the display name of a lora so long filenames can be shown with shorter, cleaner names without changing the original file.
 - Store per-lora metadata:
   - trigger words
@@ -20,6 +20,11 @@ It adds a UI that lets you organize loras into groups and subgroups, store metad
   - URL
   - preview images
 - Activate a lora with one click using its saved default strength, and apply its trigger words based on the selected trigger-word behavior.
+- Choose how trigger words are applied:
+  - add to the beginning of the prompt
+  - add to the end of the prompt
+  - replace the prompt with trigger words from all activated loras
+  - do not add trigger words
 - Automatically detect Wan 2.2 high/low loras and assign `1;0` as the default strength for high loras and `0;1` for low loras.
 - Activate matched Wan 2.2 high/low lora pairs with one click when available.
 - Clear all activated loras and restore them if needed.
@@ -35,20 +40,12 @@ It adds a UI that lets you organize loras into groups and subgroups, store metad
   - in the lora tab
   - below the prompt in the main tab
   - in its own tab
-- Choose how trigger words are applied:
-  - add to the beginning of the prompt
-  - add to the end of the prompt
-  - replace the prompt with trigger words from all activated loras
-  - do not add trigger words
 
 ## Installation
 
 1. Open the `Plugins` tab in Wan2GP.
-2. Paste this repository URL into the `GitHub URL` textbox:
-
-   `https://github.com/ppc2017/wan2gp-lora-organizer`
-
-3. Click `Download and Install from URL`.
+2. In the `Discover & Install` section on the right side, find `Lora Organizer`.
+3. Click `Install`.
 4. Restart Wan2GP if needed.
 
 ## How It Works
