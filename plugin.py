@@ -728,14 +728,11 @@ def _plugin_dir() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Custom SVG icon helpers  (icons/ subfolder)
+# Group icon / arrow helpers
 # ---------------------------------------------------------------------------
-#
-# Approach: No special chars in the label text.
-# A synchronous <script> (no defer/async) runs as soon as the browser parses
-# the gr.HTML block, setting data-lo-icon on each span before the first paint.
-# A MutationObserver then keeps icons updated on every Gradio re-render.
-# CSS ::before rules display the SVG via background-image data-URI.
+# The current group list icons are derived from value prefixes in the radio
+# choice values and rendered with pure CSS selectors. There is no external
+# icons folder or JS icon injection path anymore.
 
 
 # Icon type keys (single char, used in JS data-lo-icon attribute)
@@ -893,6 +890,30 @@ def _preview_images_dir(lora_dir: str) -> str:
     d = os.path.join(_data_dir(), "images", _model_folder_name(lora_dir))
     os.makedirs(d, exist_ok=True)
     return d
+
+
+def _is_within_dir(path: str, base_dir: str) -> bool:
+    if not path or not base_dir:
+        return False
+    try:
+        abs_path = os.path.abspath(path)
+        abs_base = os.path.abspath(base_dir)
+        return os.path.commonpath([abs_path, abs_base]) == abs_base
+    except Exception:
+        return False
+
+
+def _safe_remove_preview_image(path: str) -> bool:
+    images_root = os.path.join(_data_dir(), "images")
+    if not _is_within_dir(path, images_root):
+        return False
+    try:
+        if os.path.isfile(path):
+            os.remove(path)
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def _sanitize_filename_part(value: str) -> str:
@@ -1382,12 +1403,8 @@ def _apply_cleanup_plan(plan: dict) -> dict:
 
     for item in image_items:
         path = item["path"]
-        try:
-            if os.path.isfile(path):
-                os.remove(path)
-                removed_images += 1
-        except Exception:
-            pass
+        if _safe_remove_preview_image(path):
+            removed_images += 1
 
     return {
         "removed_metadata": removed_metadata,
@@ -2352,15 +2369,24 @@ def _assign_choices(all_loras: list) -> list:
     return [(os.path.splitext(f)[0], f) for f in all_loras]
 
 
-def _is_display_name_unique(data: dict, real_name: str, new_display: str) -> bool:
+def _is_display_name_unique(data: dict, real_name: str, new_display: str, all_loras: list[str] | None = None) -> bool:
     if not new_display.strip():
         return True
     new_lower = new_display.strip().lower()
-    for other_real, entry in data["loras"].items():
+    known_loras = list(all_loras or [])
+    if not known_loras:
+        known_loras = list(data.get("loras", {}).keys())
+    if real_name and real_name not in known_loras:
+        known_loras.append(real_name)
+    for other_real in known_loras:
         if other_real == real_name:
             continue
+        entry = data.get("loras", {}).get(other_real, {})
         other_disp = (entry.get("display_name") or "").strip().lower() or other_real.lower()
         if other_disp == new_lower:
+            return False
+        other_real_base = os.path.splitext(other_real)[0].strip().lower()
+        if other_real_base == new_lower:
             return False
     return True
 
@@ -2783,7 +2809,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                     "ACTIVATED LORAS</div>")
             activated_list_html = gr.HTML(init_active_html, elem_id="lo_active_list_html")
 
-            # ── Use / Use Both / Edit buttons ─────────────────────────
+        # ── Activation and group action buttons ───────────────────
             with gr.Row():
                 btn_use      = gr.Button("⚡ Activate Lora",  size="sm", min_width=0,
                                          elem_id="lo_btn_use",
@@ -3532,9 +3558,9 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             try:
                 action = json.loads(payload or "{}")
             except Exception:
-                return (gr.update(),) * 26
+                action = {}
             kind = action.get("action")
-            real_name = action.get("value")
+            real_name = action.get("value") or curr_selected
             data = _load_data(saved_dir)
             settings = _load_settings()
             grp = _grp_name(grp)
@@ -4486,10 +4512,23 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             if real_name and saved_dir:
                 clean_disp = (disp_name or "").strip()
                 data = _load_data(saved_dir)
+                all_l = cur_loras if cur_loras else live_loras(saved_dir)
                 previous_display_name = (data["loras"].get(real_name, {}).get("display_name") or "").strip()
-                if clean_disp != previous_display_name and clean_disp and not _is_display_name_unique(data, real_name, clean_disp):
+                if clean_disp != previous_display_name and clean_disp and not _is_display_name_unique(data, real_name, clean_disp, all_l):
                     gr.Warning(f"The display name '{clean_disp}' is already used.")
-                    return (gr.update(),) * 23
+                    pair_btn_u = _use_both_button_state(real_name, saved_dir, all_l)
+                    return (
+                        *_metadata_updates(real_name or "", saved_dir, True),
+                        pair_btn_u,
+                        gr.update(value=real_name or ""),
+                        gr.update(),
+                        saved_dir,
+                        real_name,
+                        list(preview_work or []),
+                        None,
+                        False,
+                        bool(preview_files),
+                    )
                 e = _ensure_lora(data, real_name, saved_dir)
                 e["display_name"]     = clean_disp
                 e["trigger_words"]    = (tw or "").strip()
@@ -4498,7 +4537,6 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 e["url"]              = (url or "").strip()
                 settings = _load_settings()
                 if settings.get("lora_auto_sort_mode") == AUTO_SORT_NAME and clean_disp != previous_display_name:
-                    all_l = cur_loras if cur_loras else live_loras(saved_dir)
                     _apply_lora_auto_sort(data, all_l, AUTO_SORT_NAME, cur_grp, include_all_group=True)
                 entry = _ensure_lora(data, real_name, saved_dir)
                 current_images = _preview_images_for_entry(entry, saved_dir)
@@ -4508,11 +4546,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 entry["preview_images"] = [_preview_abs_to_rel(p) for p in (kept_images + new_images)]
                 _save_data(saved_dir, data)
                 for path in removed_images:
-                    try:
-                        if os.path.isfile(path):
-                            os.remove(path)
-                    except Exception:
-                        pass
+                    _safe_remove_preview_image(path)
             data       = _load_data(saved_dir)
             all_l      = live_loras(saved_dir)
             loras      = _loras_for_group(data, cur_grp or ALL_GROUP, all_l)
