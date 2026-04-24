@@ -3085,6 +3085,8 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 lora_ui_dispatch = gr.Button("dispatch", elem_id="lo_lora_ui_dispatch")
                 active_ui_action = gr.Textbox(value="", elem_id="lo_active_ui_action")
                 active_ui_dispatch = gr.Button("dispatch", elem_id="lo_active_ui_dispatch")
+                model_poll_dispatch = gr.Textbox(value="", elem_id="lo_model_poll_dispatch")
+            model_poll_timer = gr.Timer(value=0.75, active=True)
 
             st_dir    = gr.State(init_lora_dir)
             st_action = gr.State("add")
@@ -3183,7 +3185,10 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             )
 
         def _do_refresh(state_val, forced_loras=None, forced_lora_dir=None, active_values=None, active_mult=""):
-            lora_dir  = forced_lora_dir if forced_lora_dir is not None else resolve_lora_dir_always(state_val)
+            if forced_lora_dir:
+                lora_dir = forced_lora_dir
+            else:
+                lora_dir = resolve_lora_dir_always(state_val)
             # Use filesystem scan directly; forced_loras is already a scan result
             # from the caller. Never use live_loras() here to avoid stale choices fallback.
             cur_loras = forced_loras if forced_loras is not None else _scan_dir(lora_dir)
@@ -3259,14 +3264,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
 
         _full_refresh_outputs = _refresh_out + [btn_use_both]
 
-        _loras_change_outputs = [
-            btn_use,
-            activated_list_html,
-            btn_clear_all,
-            st_clear_loras,
-            st_clear_mult,
-            st_clear_mode,
-            st_clear_expected,
+        _loras_change_outputs = _refresh_out + [
             btn_use_both,
             st_active_apply_loras,
             st_active_apply_mult,
@@ -3276,20 +3274,21 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
 
         if main_comp is not None and state_comp is not None:
             main_comp.load(fn=None, js=_lora_list_bind_js())
-            main_comp.load(fn=lambda sv, act, mult: (*_do_refresh(sv, active_values=act, active_mult=mult), gr.update()),
+            main_comp.load(fn=lambda sv, saved_dir, act, mult: (*_do_refresh(sv, forced_lora_dir=saved_dir, active_values=act, active_mult=mult), gr.update()),
                            inputs=[
                                state_comp,
+                               st_dir,
                                loras_comp if loras_comp is not None else gr.State([]),
                                mult_comp if mult_comp is not None else gr.State(""),
                            ], outputs=_full_refresh_outputs,
                            js="""
-                              (sv, act, mult) => {
+                              (sv, saved_dir, act, mult) => {
                                   window.__loLoraScrollMode = 'ensure-selected';
-                                  return [sv, act, mult];
+                                  return [sv, saved_dir, act, mult];
                               }
                            """)
 
-        def on_loras_change(loras_val, curr_mult, saved_dir, state_val, saved_loras, cur_sel_lora,
+        def on_loras_change(loras_val, curr_mult, saved_dir, saved_loras, cur_sel_lora,
                             clear_mode, clear_expected, active_reorder_pending,
                             staged_active_loras, staged_active_mult, active_selected):
             pending = getattr(self, "_model_change_pending", False)
@@ -3297,26 +3296,26 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             if pending and pending_model_type:
                 new_dir = resolve_lora_dir_for_model_type(pending_model_type)
             else:
-                new_dir = resolve_lora_dir_always(state_val)
+                new_dir = saved_dir or resolve_lora_dir_always(None)
             cur_loras = _scan_dir(new_dir) if new_dir else []
             # Model changed — full refresh (btn_use_both handled separately below)
             if new_dir != saved_dir or cur_loras != saved_loras:
                 self._model_change_pending = False
                 self._pending_model_type = None
+                refreshed = list(_do_refresh(None, forced_loras=cur_loras, forced_lora_dir=new_dir, active_values=loras_val, active_mult=curr_mult))
+                active_selected_new = active_selected
+                current_active = list(loras_val) if loras_val else []
+                if active_selected_new and str(active_selected_new) not in {str(v) for v in current_active}:
+                    active_selected_new = current_active[0] if current_active else None
                 return (
+                    *refreshed,
                     gr.update(),
-                    gr.update(value=_activated_loras_html(new_dir or saved_dir, loras_val, curr_mult, cur_loras)),
-                    _clear_button_update(list(loras_val) if loras_val else [], False),
-                    [],
-                    "",
-                    False,
                     None,
-                    gr.update(),
+                    None,
+                    False,
+                    active_selected_new,
                 )
             # Same model — re-evaluate btn_use and btn_use_both for current selection
-            if pending:
-                self._model_change_pending = False
-                self._pending_model_type = None
             already = (cur_sel_lora is not None and
                        _lora_already_active(cur_sel_lora, loras_val))
             btn_use_upd = gr.update(interactive=bool(cur_sel_lora) and not already)
@@ -3367,25 +3366,24 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                     staged_loras_upd = None
                     staged_mult_upd = None
                     active_pending_upd = False
-            return (
-                btn_use_upd,
-                active_html_upd,
-                btn_clear_upd,
-                clear_loras_upd,
-                clear_mult_upd,
-                clear_mode_upd,
-                clear_expected_upd,
-                btn_both_upd,
-                staged_loras_upd,
-                staged_mult_upd,
-                active_pending_upd,
-                active_selected_upd,
-            )
+            updates = [gr.skip()] * len(_loras_change_outputs)
+            updates[8] = active_html_upd
+            updates[28] = btn_use_upd
+            updates[29] = btn_clear_upd
+            updates[44] = clear_loras_upd
+            updates[45] = clear_mult_upd
+            updates[47] = clear_mode_upd
+            updates[48] = clear_expected_upd
+            updates[54] = btn_both_upd
+            updates[55] = staged_loras_upd
+            updates[56] = staged_mult_upd
+            updates[57] = active_pending_upd
+            updates[58] = active_selected_upd
+            return tuple(updates)
 
         if loras_comp is not None:
             loras_comp.change(fn=on_loras_change,
                               inputs=[loras_comp, mult_comp if mult_comp is not None else gr.State(""), st_dir,
-                                      state_comp if state_comp is not None else gr.State(None),
                                       st_loras, st_sel_lora, st_clear_mode, st_clear_expected,
                                       st_active_reorder_pending, st_active_apply_loras, st_active_apply_mult, st_active_selected],
                               outputs=_loras_change_outputs,
@@ -3395,18 +3393,67 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             mult_comp.change(fn=on_loras_change,
                              inputs=[loras_comp if loras_comp is not None else gr.State([]),
                                      mult_comp, st_dir,
-                                     state_comp if state_comp is not None else gr.State(None),
                                      st_loras, st_sel_lora, st_clear_mode, st_clear_expected,
                                      st_active_reorder_pending, st_active_apply_loras, st_active_apply_mult, st_active_selected],
                              outputs=_loras_change_outputs,
                              show_progress="hidden")
 
-        if state_comp is not None:
-            state_comp.change(fn=lambda act, mult, sv: (*_do_refresh(sv, active_values=act, active_mult=mult), gr.update()),
-                              inputs=[loras_comp if loras_comp is not None else gr.State([]),
-                                      mult_comp if mult_comp is not None else gr.State(""),
-                                      state_comp],
-                              outputs=_full_refresh_outputs)
+        def poll_model_change(saved_dir):
+            pending = getattr(self, "_model_change_pending", False)
+            pending_model_type = getattr(self, "_pending_model_type", None)
+            if not pending or not pending_model_type:
+                return gr.skip()
+            new_dir = resolve_lora_dir_for_model_type(pending_model_type)
+            cur_loras = _scan_dir(new_dir) if new_dir else []
+            if not new_dir:
+                return gr.skip()
+            saved_scan = _scan_dir(saved_dir) if saved_dir else []
+            if new_dir == saved_dir and cur_loras == saved_scan:
+                return gr.skip()
+            return json.dumps({"dir": new_dir})
+
+        def apply_polled_model_change(dispatch_val, active_values, active_mult):
+            if not dispatch_val:
+                return tuple(gr.skip() for _ in _full_refresh_outputs)
+            try:
+                payload = json.loads(dispatch_val)
+            except Exception:
+                return tuple(gr.skip() for _ in _full_refresh_outputs)
+            new_dir = str(payload.get("dir") or "").strip()
+            if not new_dir:
+                return tuple(gr.skip() for _ in _full_refresh_outputs)
+            cur_loras = _scan_dir(new_dir)
+            self._model_change_pending = False
+            self._pending_model_type = None
+            sel_lora = _pick_selected_lora(_load_settings(), new_dir, _load_data(new_dir).get("last_group", ALL_GROUP), _lora_choices_for_radio(_load_data(new_dir), _loras_for_group(_load_data(new_dir), _visible_selected_group(_load_data(new_dir), _load_data(new_dir).get("last_group", ALL_GROUP), _load_settings().get("hide_all_group", False)), cur_loras))) if new_dir else None
+            return (
+                *_do_refresh(None, forced_loras=cur_loras, forced_lora_dir=new_dir, active_values=active_values, active_mult=active_mult),
+                _use_both_button_state(sel_lora, new_dir, cur_loras),
+            )
+
+        model_poll_timer.tick(
+            fn=poll_model_change,
+            inputs=[
+                st_dir,
+            ],
+            outputs=[model_poll_dispatch],
+            show_progress="hidden",
+            queue=False,
+            trigger_mode="always_last",
+        )
+
+        model_poll_dispatch.change(
+            fn=apply_polled_model_change,
+            inputs=[
+                model_poll_dispatch,
+                loras_comp if loras_comp is not None else gr.State([]),
+                mult_comp if mult_comp is not None else gr.State(""),
+            ],
+            outputs=_full_refresh_outputs,
+            show_progress="hidden",
+            queue=False,
+            trigger_mode="always_last",
+        )
 
         # ── Group radio change ─────────────────────────────────────────
         def on_grp_change(grp, saved_dir, cur_loras, curr_act):
