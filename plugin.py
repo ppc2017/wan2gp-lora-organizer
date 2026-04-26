@@ -45,6 +45,16 @@ _CSS_BASE = """
     display: none !important;
 }
 #lo_accordion > .label-wrap { margin-bottom: 0 !important; }
+#lo_accordion > .label-wrap span::first-letter,
+#lo_metadata_accordion > .label-wrap span::first-letter,
+#lo_cleanup_accordion > .label-wrap span::first-letter,
+#lo_settings_accordion > .label-wrap span::first-letter,
+#lo_list_appearance_accordion > .label-wrap span::first-letter {
+    font-size: 1.35em !important;
+    line-height: 1 !important;
+    vertical-align: -0.12em !important;
+    padding-right: 1px !important;
+}
 #lo_grp_radio, #lo_lora_radio, #lo_lora_list {
     border: none !important;
     border-radius: 8px !important;
@@ -474,8 +484,21 @@ _CSS_BASE = """
     min-width: 0 !important;
     overflow-y: hidden !important;
 }
+#lo_metadata_accordion > .label-wrap,
+#lo_cleanup_accordion > .label-wrap,
+#lo_settings_accordion > .label-wrap,
+#lo_list_appearance_accordion > .label-wrap {
+    margin-left: -4px !important;
+}
+#lo_list_appearance_accordion {
+    margin-top: -14px !important;
+}
 #lo_accordion .padding.svelte-phx28p {
     padding: 0 !important;
+}
+#lo_list_appearance_accordion > .block.padded,
+#lo_list_appearance_accordion > .padding {
+    padding-top: 10px !important;
 }
 /* Reduce vertical spacing between the metadata/settings/cleanup accordions */
 #lo_metadata_accordion,
@@ -493,7 +516,7 @@ _CSS_BASE = """
 /* Shrink the gap in whatever flex/column container holds these three accordions */
 #lo_metadata_accordion ~ #lo_settings_accordion,
 #lo_settings_accordion ~ #lo_cleanup_accordion {
-    margin-top: -6px !important;
+    margin-top: -14px !important;
 }
 /* Also target the svelte gap containers that Gradio injects around accordions */
 #lo_accordion .block.padded > .gap,
@@ -503,6 +526,7 @@ _CSS_BASE = """
     gap: 2px !important;
     row-gap: 2px !important;
 }
+
 #lo_cleanup_report textarea {
     max-height: 12rem !important;
     overflow-y: scroll !important;
@@ -3072,7 +3096,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                                                label="Start with Lora Metadata expanded")
                 hide_all_cb     = gr.Checkbox(value=init_hide_all,
                                               label='Hide "All" group')
-                with gr.Accordion("🎛️ Lora & Group List Appearance", open=False):
+                with gr.Accordion("🎛️ Lora & Group List Appearance", open=False, elem_id="lo_list_appearance_accordion"):
                     view_mode_dd = gr.Dropdown(
                         choices=[LORA_VIEW_VERTICAL, LORA_VIEW_HORIZONTAL, LORA_VIEW_THUMBNAIL],
                         value=init_view_mode,
