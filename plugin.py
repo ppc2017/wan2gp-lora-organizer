@@ -271,6 +271,11 @@ _CSS_BASE = """
     color: white !important;
     font-weight: normal !important;
 }
+#lo_lora_list[data-view-mode="thumbnail"] .lo-lora-item.is-selected,
+#lo_lora_list.lo-view-thumbnail .lo-lora-item.is-selected {
+    border-color: #f97316 !important;
+    box-shadow: inset 0 0 0 4px #f97316 !important;
+}
 #lo_lora_list .lo-lora-item.is-dragging {
     opacity: .45 !important;
 }
@@ -1479,14 +1484,24 @@ def _apply_cleanup_plan(plan: dict) -> dict:
 
 
 def _scan_dir(lora_dir: str) -> list:
-    lora_exts = {".safetensors", ".pt", ".pth", ".ckpt"}
+    lora_exts = {".safetensors", ".sft", ".pt", ".pth", ".ckpt"}
     if not lora_dir or not os.path.isdir(lora_dir):
         return []
     try:
-        return sorted(
-            f for f in os.listdir(lora_dir)
-            if os.path.splitext(f)[1].lower() in lora_exts
-        )
+        seen = set()
+        found = []
+        for root, dirs, files in os.walk(lora_dir):
+            dirs.sort()
+            for f in sorted(files):
+                if os.path.splitext(f)[1].lower() not in lora_exts:
+                    continue
+                rel = os.path.relpath(os.path.join(root, f), lora_dir)
+                rel = rel.replace("\\", "/")
+                if rel in seen:
+                    continue
+                seen.add(rel)
+                found.append(rel)
+        return found
     except Exception:
         return []
 
@@ -2468,6 +2483,44 @@ def _assign_choices(all_loras: list) -> list:
     return [(os.path.splitext(f)[0], f) for f in all_loras]
 
 
+def _lora_value_aliases(real_name: str) -> list[str]:
+    if not real_name:
+        return []
+    normalized = str(real_name).replace("\\", "/")
+    no_ext = os.path.splitext(normalized)[0]
+    aliases = [normalized]
+    if no_ext and no_ext != normalized:
+        aliases.append(no_ext)
+    base = os.path.basename(normalized)
+    if base and base not in aliases:
+        aliases.append(base)
+    base_no_ext = os.path.splitext(base)[0] if base else ""
+    if base_no_ext and base_no_ext not in aliases:
+        aliases.append(base_no_ext)
+    return aliases
+
+
+def _hierarchy_item_values(hierarchy) -> list[tuple[str, str, str]]:
+    items = []
+
+    def visit(node):
+        if not isinstance(node, dict):
+            return
+        for item in node.get("items", []) or []:
+            if not isinstance(item, dict):
+                continue
+            value = str(item.get("value") or item.get("path") or item.get("name") or "")
+            path = str(item.get("path") or item.get("name") or item.get("value") or "")
+            name = str(item.get("name") or item.get("path") or item.get("value") or "")
+            if value:
+                items.append((value, path, name))
+        for folder in node.get("folders", []) or []:
+            visit(folder)
+
+    visit(hierarchy)
+    return items
+
+
 def _is_display_name_unique(data: dict, real_name: str, new_display: str, all_loras: list[str] | None = None) -> bool:
     if not new_display.strip():
         return True
@@ -2531,7 +2584,10 @@ def _activated_loras_html(lora_dir: str, active_values, multipliers: str = "", k
     if not values:
         return "<div id='lo_active_list'><div class='lo-empty'>No activated loras.</div></div>"
     all_loras = known_loras if known_loras is not None else live_loras(lora_dir)
-    value_to_real = {real_name: real_name for real_name in all_loras}
+    value_to_real = {}
+    for real_name in all_loras:
+        for alias in _lora_value_aliases(real_name):
+            value_to_real.setdefault(alias, real_name)
     data = data if data is not None else _load_data(lora_dir)
     strengths = _split_multiplier_values(multipliers)
     items = []
@@ -2616,7 +2672,7 @@ def _use_both_button_state(real_name: str | None, saved_dir: str, all_loras: lis
 class LoraOrganizerPlugin(WAN2GPPlugin):
 
     name        = "Lora Organizer"
-    version     = "1.14"
+    version     = "1.15"
 
     def __init__(self):
         super().__init__()
@@ -2742,6 +2798,12 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             return ""
 
         def live_loras(lora_dir: str = "") -> list:
+            if loras_comp is not None:
+                hierarchy = getattr(loras_comp, "hierarchy", None)
+                if hierarchy:
+                    values = [value for value, _path, _name in _hierarchy_item_values(hierarchy)]
+                    if values:
+                        return values
             if lora_dir:
                 scanned = _scan_dir(lora_dir)
                 return scanned
@@ -2763,11 +2825,20 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
         def lora_val(real_name: str) -> str:
             if loras_comp is None:
                 return real_name
+            aliases = set(_lora_value_aliases(real_name))
+            hierarchy = getattr(loras_comp, "hierarchy", None)
+            if hierarchy:
+                for value, path, name in _hierarchy_item_values(hierarchy):
+                    if value in aliases or path in aliases or name in aliases:
+                        return value
             try:
                 for c in (loras_comp.choices or []):
-                    if isinstance(c, (list, tuple)) and c[0] == real_name:
-                        return str(c[1])
-                    elif c == real_name:
+                    if isinstance(c, (list, tuple)):
+                        label = str(c[0]) if len(c) > 0 else ""
+                        value = str(c[1]) if len(c) > 1 else label
+                        if label in aliases or value in aliases:
+                            return value
+                    elif c in aliases:
                         return real_name
             except Exception:
                 pass
