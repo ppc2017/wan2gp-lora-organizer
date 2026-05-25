@@ -444,10 +444,10 @@ _CSS_BASE = """
 }
 /* Uniform button font size */
 #lo_btn_use, #lo_btn_use_both,
-#lo_btn_clear_all, #lo_btn_reorder_loras,
+#lo_btn_clear_all, #lo_btn_reorder_loras, #lo_btn_lora_search,
 #lo_btn_add_group, #lo_btn_add_sub_group, #lo_btn_manage_group, #lo_btn_assign,
 #lo_btn_rename_group, #lo_btn_delete_group, #lo_btn_move_up, #lo_btn_move_down,
-#lo_btn_group_done, #lo_btn_lora_sort, #lo_btn_lora_sort_used, #lo_btn_lora_done,
+#lo_btn_group_done, #lo_btn_lora_sort, #lo_btn_lora_sort_used, #lo_btn_lora_done, #lo_btn_lora_search_done,
 #lo_btn_save_assign, #lo_btn_cancel_assign,
 #lo_btn_save_edit, #lo_btn_cancel_edit,
 #lo_btn_confirm, #lo_btn_cancel_grp,
@@ -458,6 +458,32 @@ _CSS_BASE = """
 #lo_btn_preview_remove, #lo_btn_preview_clear, #lo_btn_cleanup_scan {
     font-size: 0.8rem !important;
     min-height: 2.45rem !important;
+}
+#lo_lora_search_row {
+    --layout-gap: 10px !important;
+    column-gap: 10px !important;
+    gap: 10px !important;
+}
+#lo_lora_search_row > .form,
+#lo_lora_search_row .form,
+#lo_lora_search_row [class*="form"] {
+    column-gap: 10px !important;
+    gap: 10px !important;
+}
+#lo_lora_search_spacer,
+#lo_lora_search_spacer .html-container,
+#lo_lora_search_spacer .prose {
+    flex: 0 0 1px !important;
+    width: 1px !important;
+    min-width: 1px !important;
+    max-width: 1px !important;
+    min-height: 0 !important;
+    height: 0 !important;
+    padding: 0 !important;
+    margin: 0 -6px 0 -6px !important;
+    border: 0 !important;
+    background: transparent !important;
+    overflow: hidden !important;
 }
 /* Strip accordion inner padding so all fields fill full width */
 #lo_accordion .block.padded,
@@ -643,6 +669,9 @@ CLEANUP_KIND_IMAGES = "Cleanup preview images"
 AUTO_SORT_NONE = "Do not auto-sort"
 AUTO_SORT_NAME = "Auto-sort by name (disables manual sorting)"
 AUTO_SORT_MOST_USED = "Auto-sort by most used (disables manual sorting)"
+SEARCH_NAME = "Search Name"
+SEARCH_METADATA = "Search Metadata"
+SEARCH_NAME_METADATA = "Search Name & Metadata"
 TRIGGER_WORDS_PREPEND = "Add trigger words to the beginning of the prompt"
 TRIGGER_WORDS_APPEND = "Add trigger words to the end of the prompt"
 TRIGGER_WORDS_REPLACE = "Replace the prompt with trigger words of all activated loras"
@@ -1096,6 +1125,7 @@ def _empty_settings() -> dict:
         "accordion_open": False,
         "metadata_accordion_open": False,
         "hide_all_group": False,
+        "lora_search_mode": SEARCH_NAME,
     }
 
 
@@ -1119,6 +1149,8 @@ def _load_settings() -> dict:
             data.setdefault("accordion_open", False)
             data.setdefault("metadata_accordion_open", False)
             data.setdefault("hide_all_group", False)
+            if data.get("lora_search_mode") not in (SEARCH_NAME, SEARCH_METADATA, SEARCH_NAME_METADATA):
+                data["lora_search_mode"] = SEARCH_NAME
             return data
         except Exception:
             pass
@@ -1669,6 +1701,39 @@ def _lora_display_name(data: dict, real_name: str) -> str:
 
 def _display_name_for_sort(data: dict, real_name: str) -> str:
     return _lora_display_name(data, real_name).lower()
+
+
+def _search_loras(data: dict, all_loras: list[str], term: str, mode: str) -> list[str]:
+    query = (term or "").strip().lower()
+    items = list(all_loras or [])
+    if not query:
+        return items
+
+    search_name = mode in (SEARCH_NAME, SEARCH_NAME_METADATA)
+    search_metadata = mode in (SEARCH_METADATA, SEARCH_NAME_METADATA)
+    results = []
+    for real_name in items:
+        entry = data.get("loras", {}).get(real_name, {})
+        haystacks = []
+        if search_name:
+            haystacks.extend([
+                real_name,
+                os.path.splitext(real_name)[0],
+                os.path.basename(real_name),
+                os.path.splitext(os.path.basename(real_name))[0],
+                _lora_display_name(data, real_name),
+            ])
+        if search_metadata:
+            haystacks.extend([
+                entry.get("display_name", ""),
+                entry.get("trigger_words", ""),
+                entry.get("default_strength", ""),
+                entry.get("info", ""),
+                entry.get("url", ""),
+            ])
+        if any(query in str(value).lower() for value in haystacks if value is not None):
+            results.append(real_name)
+    return results
 
 
 def _sort_lora_names(data: dict, loras: list[str], mode: str | None) -> list[str]:
@@ -2672,7 +2737,7 @@ def _use_both_button_state(real_name: str | None, saved_dir: str, all_loras: lis
 class LoraOrganizerPlugin(WAN2GPPlugin):
 
     name        = "Lora Organizer"
-    version     = "1.15"
+    version     = "1.16"
 
     def __init__(self):
         super().__init__()
@@ -2864,6 +2929,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
         init_acc_open  = init_settings.get("accordion_open", False)
         init_meta_acc_open = init_settings.get("metadata_accordion_open", False)
         init_hide_all  = init_settings.get("hide_all_group", False)
+        init_lora_search_mode = init_settings.get("lora_search_mode", SEARCH_NAME)
         init_all_loras = live_loras()
         init_grp       = init_data.get("last_group", ALL_GROUP)
         if init_grp not in [ALL_GROUP] + _group_names(init_data):
@@ -2943,6 +3009,9 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 btn_reorder_loras = gr.Button("↕️ Sort Loras", size="sm", min_width=0,
                                               elem_id="lo_btn_reorder_loras",
                                               interactive=init_has_lora)
+                btn_lora_search = gr.Button("🔍 Search", size="sm", min_width=0,
+                                            elem_id="lo_btn_lora_search",
+                                            interactive=init_has_lora)
 
             with gr.Row(visible=False) as lora_manage_row:
                 auto_sort_dd = gr.Dropdown(
@@ -2960,6 +3029,30 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                                                interactive=False, elem_id="lo_btn_lora_sort_used")
                 btn_lora_done = gr.Button("✔ Done", size="sm", min_width=0, variant="primary",
                                           elem_id="lo_btn_lora_done")
+
+            with gr.Row(visible=False, elem_id="lo_lora_search_row") as lora_search_row:
+                lora_search_tb = gr.Textbox(
+                    value="",
+                    placeholder="Search loras",
+                    label="",
+                    show_label=False,
+                    scale=3,
+                    min_width=0,
+                    elem_id="lo_lora_search_tb",
+                )
+                gr.HTML("", elem_id="lo_lora_search_spacer")
+                lora_search_mode_dd = gr.Dropdown(
+                    choices=[SEARCH_NAME, SEARCH_METADATA, SEARCH_NAME_METADATA],
+                    value=init_lora_search_mode,
+                    label="",
+                    show_label=False,
+                    interactive=True,
+                    scale=2,
+                    min_width=0,
+                    elem_id="lo_lora_search_mode",
+                )
+                btn_lora_search_done = gr.Button("✔ Done", size="sm", min_width=0, variant="primary",
+                                                 elem_id="lo_btn_lora_search_done")
 
             # ── Groups + Loras lists ───────────────────────────────────
             if init_side:
@@ -3692,6 +3785,98 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             val = lora_val(real_name)
             activated = list(curr_act) if curr_act else []
             return val in activated
+
+        def _search_lora_view(term, mode, saved_dir, cur_loras, curr_act, current_selected):
+            data = _load_data(saved_dir)
+            settings = _load_settings()
+            all_l = cur_loras if cur_loras else live_loras(saved_dir)
+            all_group_loras = _loras_for_group(data, ALL_GROUP, all_l, hide_all=False)
+            results = _search_loras(data, all_group_loras, term, mode)
+            selected = current_selected if current_selected in results else (results[0] if results else None)
+            already = bool(selected and _lora_already_active(selected, curr_act))
+            return (
+                gr.update(value=selected or ""),
+                gr.update(value=_lora_list_html(data, results, selected, reveal_selected=True, lora_dir=saved_dir, settings=settings, preview_url_cache={})),
+                gr.update(interactive=bool(selected) and not already),
+                gr.update(interactive=bool(results)),
+                _use_both_button_state(selected, saved_dir, all_l),
+                selected,
+            )
+
+        def _restore_group_lora_view(saved_dir, cur_loras, grp, search_mode):
+            data = _load_data(saved_dir)
+            settings = _load_settings()
+            if search_mode in (SEARCH_NAME, SEARCH_METADATA, SEARCH_NAME_METADATA):
+                settings["lora_search_mode"] = search_mode
+                _save_settings(settings)
+            all_l = cur_loras if cur_loras else live_loras(saved_dir)
+            grp = _grp_name(grp) or data.get("last_group", ALL_GROUP)
+            loras = _loras_for_group(data, grp, all_l, settings.get("hide_all_group", False))
+            selected = _pick_selected_lora(settings, saved_dir, grp, _lora_choices_for_radio(data, loras))
+            sort_u, sort_used_u, done_u = _lora_sort_ui_updates(
+                selected, grp, data, all_l, settings.get("lora_auto_sort_mode", AUTO_SORT_NONE)
+            )
+            return (
+                gr.update(visible=False),
+                gr.update(value=""),
+                gr.update(value=settings.get("lora_search_mode", SEARCH_NAME)),
+                gr.update(interactive=True),
+                gr.update(value=selected or ""),
+                gr.update(value=_lora_list_html(data, loras, selected, reveal_selected=True, lora_dir=saved_dir, settings=settings, preview_url_cache={})),
+                gr.update(interactive=bool(selected)),
+                gr.update(interactive=bool(loras)),
+                sort_u,
+                sort_used_u,
+                done_u,
+                _use_both_button_state(selected, saved_dir, all_l),
+                selected,
+            )
+
+        def _open_lora_search(saved_dir, cur_loras, curr_act, current_selected):
+            settings = _load_settings()
+            search_mode = settings.get("lora_search_mode", SEARCH_NAME)
+            search_updates = _search_lora_view("", search_mode, saved_dir, cur_loras, curr_act, current_selected)
+            return (
+                gr.update(visible=True),
+                gr.update(value=""),
+                gr.update(value=search_mode),
+                gr.update(interactive=False),
+                *search_updates,
+            )
+
+        _search_active_input = loras_comp if loras_comp is not None else gr.State([])
+        btn_lora_search.click(
+            fn=_open_lora_search,
+            inputs=[st_dir, st_loras, _search_active_input, st_sel_lora],
+            outputs=[lora_search_row, lora_search_tb, lora_search_mode_dd,
+                     grp_radio, lora_radio, lora_list_html, btn_use, btn_reorder_loras, btn_use_both, st_sel_lora],
+            show_progress="hidden",
+        )
+
+        def _search_lora_controls(term, mode, saved_dir, cur_loras, curr_act, current_selected):
+            return _search_lora_view(term, mode, saved_dir, cur_loras, curr_act, current_selected)
+
+        _search_outputs = [lora_radio, lora_list_html, btn_use, btn_reorder_loras, btn_use_both, st_sel_lora]
+        lora_search_tb.input(
+            fn=_search_lora_controls,
+            inputs=[lora_search_tb, lora_search_mode_dd, st_dir, st_loras, _search_active_input, st_sel_lora],
+            outputs=_search_outputs,
+            show_progress="hidden",
+        )
+        lora_search_mode_dd.change(
+            fn=_search_lora_controls,
+            inputs=[lora_search_tb, lora_search_mode_dd, st_dir, st_loras, _search_active_input, st_sel_lora],
+            outputs=_search_outputs,
+            show_progress="hidden",
+        )
+        btn_lora_search_done.click(
+            fn=_restore_group_lora_view,
+            inputs=[st_dir, st_loras, grp_radio, lora_search_mode_dd],
+            outputs=[lora_search_row, lora_search_tb, lora_search_mode_dd,
+                     grp_radio, lora_radio, lora_list_html, btn_use, btn_reorder_loras,
+                     btn_lora_sort, btn_lora_sort_used, btn_lora_done, btn_use_both, st_sel_lora],
+            show_progress="hidden",
+        )
 
         # ── Lora radio change ──────────────────────────────────────────
         def on_lora_change(real_name, saved_dir, cur_loras, curr_act):
