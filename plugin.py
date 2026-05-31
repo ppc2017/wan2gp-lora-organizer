@@ -1,6 +1,6 @@
 """
-Lora Organizer Plugin for Wan2GP
-Groups, display names, trigger words, default strength, notes, and URL per lora.
+LoRA Organizer Plugin for Wan2GP
+Groups, display names, trigger words, default strength, notes, and URL per LoRA.
 Data is stored per-model in the plugin folder (e.g. ltx2.json, flux.json).
 """
 
@@ -273,8 +273,18 @@ _CSS_BASE = """
 }
 #lo_lora_list[data-view-mode="thumbnail"] .lo-lora-item.is-selected,
 #lo_lora_list.lo-view-thumbnail .lo-lora-item.is-selected {
-    border-color: #f97316 !important;
-    box-shadow: inset 0 0 0 4px #f97316 !important;
+    border-color: var(--button-primary-background-fill-hover, #38bdf8) !important;
+    box-shadow: none !important;
+}
+#lo_lora_list[data-view-mode="thumbnail"] .lo-lora-item.is-selected::after,
+#lo_lora_list.lo-view-thumbnail .lo-lora-item.is-selected::after {
+    content: "" !important;
+    position: absolute !important;
+    inset: 0 !important;
+    border: 2px solid var(--button-primary-background-fill-hover, #38bdf8) !important;
+    border-radius: inherit !important;
+    pointer-events: none !important;
+    z-index: 3 !important;
 }
 #lo_lora_list .lo-lora-item.is-dragging {
     opacity: .45 !important;
@@ -659,12 +669,12 @@ THUMB_CYCLE_HOVER = "Cycle thumbnail images when hovering"
 THUMB_CYCLE_AUTO = "Auto-cycle thumbnail images"
 THUMB_CYCLE_NONE = "Do not cycle thumbnail images"
 PLACEMENT_MAIN = "Below the prompt in the main tab"
-PLACEMENT_LORA_TAB = "In the lora tab"
+PLACEMENT_LORA_TAB = "In the LoRA tab"
 PLACEMENT_OWN_TAB = "In its own tab"
 CLEANUP_SCOPE_CURRENT = "Cleanup data of the current model"
 CLEANUP_SCOPE_ALL = "Cleanup data of all models"
-CLEANUP_KIND_BOTH = "Cleanup lora metadata + preview images"
-CLEANUP_KIND_METADATA = "Cleanup lora metadata"
+CLEANUP_KIND_BOTH = "Cleanup LoRA metadata + preview images"
+CLEANUP_KIND_METADATA = "Cleanup LoRA metadata"
 CLEANUP_KIND_IMAGES = "Cleanup preview images"
 AUTO_SORT_NONE = "Do not auto-sort"
 AUTO_SORT_NAME = "Auto-sort by name (disables manual sorting)"
@@ -674,7 +684,7 @@ SEARCH_METADATA = "Search Metadata"
 SEARCH_NAME_METADATA = "Search Name & Metadata"
 TRIGGER_WORDS_PREPEND = "Add trigger words to the beginning of the prompt"
 TRIGGER_WORDS_APPEND = "Add trigger words to the end of the prompt"
-TRIGGER_WORDS_REPLACE = "Replace the prompt with trigger words of all activated loras"
+TRIGGER_WORDS_REPLACE = "Replace the prompt with trigger words of all activated LoRAs"
 TRIGGER_WORDS_NONE = "Do not add trigger words"
 DEFAULT_TRIGGER_WORDS_MODE = TRIGGER_WORDS_PREPEND
 
@@ -871,7 +881,7 @@ def _icon_css_block() -> str:
     # an input whose value starts with "f:" — pure CSS, no JS, no flash.
     # ALL_GROUP uses value="All" (no prefix) — we match it with input[value="All"].
     css = (
-        "/* === Lora Organizer accordion arrows (value-prefix CSS) === */\n"
+        "/* === LoRA Organizer accordion arrows (value-prefix CSS) === */\n"
         "#lo_grp_radio label span{position:relative !important;padding-right:2.6em !important;}\n"
         "#lo_grp_radio label input[value^=\"c:\"] ~ span::after {"
         + collapsed_css + "}\n"
@@ -1460,14 +1470,14 @@ def _cleanup_report_text(plan: dict, cleanup_kind: str) -> str:
     cleanup_metadata, cleanup_images = _cleanup_kind_flags(cleanup_kind)
     if not metadata_items and not image_items:
         if cleanup_metadata and cleanup_images:
-            return "No orphaned lora metadata or preview images were found."
+            return "No orphaned LoRA metadata or preview images were found."
         if cleanup_metadata:
-            return "No orphaned lora metadata was found."
+            return "No orphaned LoRA metadata was found."
         return "No orphaned preview images were found."
 
     lines = []
     if metadata_items:
-        lines.append("Orphaned lora metadata:")
+        lines.append("Orphaned LoRA metadata:")
         for item in metadata_items:
             lines.append(f"- [{item['model']}] {item['real_name']}")
         lines.append("")
@@ -1810,7 +1820,7 @@ def _lora_list_html(data: dict, loras: list, selected: str | None, reveal_select
         return (
             f"<div id='lo_lora_list' class='{view_class}'{view_style} "
             f"data-view-mode='{view_mode_attr}' data-thumb-cycle-mode='{cycle_mode_attr}'>"
-            "<div class='lo-empty'>No loras in this group.</div></div>"
+            "<div class='lo-empty'>No LoRAs in this group.</div></div>"
         )
     items = []
     for real_name in loras:
@@ -2647,7 +2657,7 @@ def _activated_loras_html(lora_dir: str, active_values, multipliers: str = "", k
                           selected_active: str | None = None, data: dict | None = None) -> str:
     values = list(active_values) if active_values else []
     if not values:
-        return "<div id='lo_active_list'><div class='lo-empty'>No activated loras.</div></div>"
+        return "<div id='lo_active_list'><div class='lo-empty'>No activated LoRAs.</div></div>"
     all_loras = known_loras if known_loras is not None else live_loras(lora_dir)
     value_to_real = {}
     for real_name in all_loras:
@@ -2681,12 +2691,12 @@ def _activated_loras_html(lora_dir: str, active_values, multipliers: str = "", k
             "<span class='lo-active-actions'>"
             "<button type='button' class='lo-active-action lo-active-edit' title='Edit strength' "
             "onclick='event.stopPropagation(); window.__loEditActive && window.__loEditActive(this.closest(\".lo-active-item\"))'>✏️</button>"
-            "<button type='button' class='lo-active-action lo-active-remove' title='Remove activated lora' "
+            "<button type='button' class='lo-active-action lo-active-remove' title='Remove activated LoRA' "
             "onclick='event.stopPropagation(); window.__loRemoveActive && window.__loRemoveActive(this.closest(\".lo-active-item\"))'>✖</button>"
             "</span></div>"
         )
     if not items:
-        return "<div id='lo_active_list'><div class='lo-empty'>No activated loras.</div></div>"
+        return "<div id='lo_active_list'><div class='lo-empty'>No activated LoRAs.</div></div>"
     active_html = "".join(items)
     return (
         "<div id='lo_active_list' "
@@ -2699,8 +2709,8 @@ def _activated_loras_html(lora_dir: str, active_values, multipliers: str = "", k
 def _clear_button_update(active_loras, undo_mode: bool = False):
     has_active = bool(active_loras)
     if undo_mode:
-        return gr.update(value="↶ Restore Cleared Loras", interactive=True)
-    return gr.update(value="❌ Clear Activated Loras", interactive=has_active)
+        return gr.update(value="↶ Restore Cleared LoRAs", interactive=True)
+    return gr.update(value="❌ Clear Activated LoRAs", interactive=has_active)
 
 
 def _manage_group_button_update(group: str | None):
@@ -2736,8 +2746,8 @@ def _use_both_button_state(real_name: str | None, saved_dir: str, all_loras: lis
 
 class LoraOrganizerPlugin(WAN2GPPlugin):
 
-    name        = "Lora Organizer"
-    version     = "1.16"
+    name        = "LoRA Organizer"
+    version     = "1.17"
 
     def __init__(self):
         super().__init__()
@@ -2759,7 +2769,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
         if placement_mode == PLACEMENT_OWN_TAB:
             self.add_tab(
                 tab_id="LoraOrganizer",
-                label="Lora Organizer",
+                label="LoRA Organizer",
                 component_constructor=self._build_ui,
             )
         else:
@@ -2786,6 +2796,14 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
         main_comp   = _component_or_none(getattr(self, "main", None))
         state_comp  = _component_or_none(getattr(self, "state", None))
 
+        def state_component_value():
+            if state_comp is None:
+                return None
+            try:
+                return getattr(state_comp, "value", None)
+            except Exception:
+                return None
+
         # ── Core helpers ──────────────────────────────────────────────
 
         def resolve_lora_dir(state_val=None) -> str:
@@ -2800,7 +2818,8 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                             return os.path.abspath(path)
                 except Exception:
                     pass
-            # Fallback: scan filesystem for lora files
+            # Fallback: use only explicit lora_dir hints. Avoid walking the
+            # whole WanGP tree, which can pick unrelated folders like "unused".
             names = live_loras()
             if names:
                 sample = names[0]
@@ -2810,19 +2829,6 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                     abs_d = os.path.abspath(self_raw)
                     if abs_d != cwd and os.path.isfile(os.path.join(abs_d, sample)):
                         return abs_d
-                skip = {"__pycache__", "outputs", "models", ".git", ".venv",
-                        "venv", "cache", "shared", "web", "static", "plugins"}
-                for root, dirs, files in os.walk(cwd):
-                    dirs[:] = [d for d in sorted(dirs)
-                               if d not in skip and not d.startswith(".")]
-                    rel = os.path.relpath(root, cwd)
-                    depth = 0 if rel == "." else len(rel.split(os.sep))
-                    if depth == 0: continue
-                    if depth > 3:
-                        dirs.clear()
-                        continue
-                    if sample in files:
-                        return os.path.abspath(root)
             self_raw = getattr(self, "lora_dir", "") or ""
             if self_raw:
                 abs_d = os.path.abspath(self_raw)
@@ -2911,7 +2917,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
 
         # ── Bootstrap ─────────────────────────────────────────────────
 
-        init_lora_dir  = resolve_lora_dir_always()
+        init_lora_dir  = resolve_lora_dir_always(state_component_value())
         init_data      = _load_data(init_lora_dir)
         init_settings  = _load_settings()
         init_view_mode = _normalize_lora_view_mode(init_settings.get("lora_view_mode"))
@@ -2970,7 +2976,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
         # ── UI ────────────────────────────────────────────────────────
 
         organizer_wrapper = (
-            gr.Accordion("🗂️ Lora Organizer", open=init_acc_open, elem_id="lo_accordion")
+            gr.Accordion("🗂️ LoRA Organizer", open=init_acc_open, elem_id="lo_accordion")
             if init_placement_mode != PLACEMENT_OWN_TAB
             else gr.Column(elem_id="lo_accordion")
         )
@@ -2993,20 +2999,20 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             gr.HTML("<div style='height:2px;line-height:0;font-size:0'></div>")
             gr.HTML("<div style='font-size:.8rem;font-weight:600;"
                     "margin:0 0 2px;opacity:.65;letter-spacing:.04em'>"
-                    "ACTIVATED LORAS</div>")
+                    "ACTIVATED LoRAs</div>")
             activated_list_html = gr.HTML(init_active_html, elem_id="lo_active_list_html")
 
         # ── Activation and group action buttons ───────────────────
             with gr.Row():
-                btn_use      = gr.Button("⚡ Activate Lora",  size="sm", min_width=0,
+                btn_use      = gr.Button("⚡ Activate LoRA",  size="sm", min_width=0,
                                          elem_id="lo_btn_use",
                                          interactive=init_has_lora)
                 btn_use_both = gr.Button("🔛 Activate High & Low", size="sm", min_width=0,
                                          elem_id="lo_btn_use_both", visible=False)
-                btn_clear_all = gr.Button("❌ Clear Activated Loras", size="sm", min_width=0,
+                btn_clear_all = gr.Button("❌ Clear Activated LoRAs", size="sm", min_width=0,
                                           elem_id="lo_btn_clear_all",
                                           interactive=bool(init_active_loras))
-                btn_reorder_loras = gr.Button("↕️ Sort Loras", size="sm", min_width=0,
+                btn_reorder_loras = gr.Button("↕️ Sort LoRAs", size="sm", min_width=0,
                                               elem_id="lo_btn_reorder_loras",
                                               interactive=init_has_lora)
                 btn_lora_search = gr.Button("🔍 Search", size="sm", min_width=0,
@@ -3033,7 +3039,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             with gr.Row(visible=False, elem_id="lo_lora_search_row") as lora_search_row:
                 lora_search_tb = gr.Textbox(
                     value="",
-                    placeholder="Search loras",
+                    placeholder="Search LoRAs",
                     label="",
                     show_label=False,
                     scale=3,
@@ -3067,7 +3073,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                     with gr.Column(elem_id="lo_loras_col"):
                         gr.HTML("<div style='font-size:.8rem;font-weight:600;"
                                 "margin:4px 0 2px;opacity:.65;letter-spacing:.04em'>"
-                                "LORAS IN GROUP</div>")
+                                "LoRAs IN GROUP</div>")
                         lora_list_html = gr.HTML(init_lora_html, elem_id="lo_lora_list_html")
             else:
                 gr.HTML("<div style='font-size:.8rem;font-weight:600;"
@@ -3079,7 +3085,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 gr.HTML("<hr style='margin:6px 0;opacity:.2'>")
                 gr.HTML("<div style='font-size:.8rem;font-weight:600;"
                         "margin:4px 0 2px;opacity:.65;letter-spacing:.04em'>"
-                        "LORAS IN GROUP</div>")
+                        "LoRAs IN GROUP</div>")
                 lora_list_html = gr.HTML(init_lora_html, elem_id="lo_lora_list_html")
 
             global _STATIC_FILE_BLOCK
@@ -3093,7 +3099,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                                         interactive=init_has_group, elem_id="lo_btn_add_sub_group")
                 btn_manage_group = gr.Button("🗂️ Manage Group", size="sm", min_width=0,
                                              interactive=init_has_group, elem_id="lo_btn_manage_group")
-                btn_assign = gr.Button("📋 Assign Loras To Group", size="sm", min_width=0,
+                btn_assign = gr.Button("📋 Assign LoRAs To Group", size="sm", min_width=0,
                                        interactive=init_has_group, elem_id="lo_btn_assign")
 
             with gr.Row(visible=False) as group_manage_row:
@@ -3126,7 +3132,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
 
             assign_dd = gr.Dropdown(
                 choices=_assign_choices(init_all_loras), value=None,
-                label="Select loras to assign to this group",
+                label="Select LoRAs to assign to this group",
                 multiselect=True, visible=False, interactive=True,
             )
             with gr.Row(visible=False) as assign_row:
@@ -3136,7 +3142,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                                               elem_id="lo_btn_cancel_assign")
 
             # ── Lora detail fields ─────────────────────────────────────
-            with gr.Accordion("📝 Lora Metadata", open=init_meta_acc_open, elem_id="lo_metadata_accordion") as metadata_accordion:
+            with gr.Accordion("📝 LoRA Metadata", open=init_meta_acc_open, elem_id="lo_metadata_accordion") as metadata_accordion:
                 with gr.Row(equal_height=True, elem_id="lo_name_row"):
                     with gr.Column(scale=1, min_width=0, elem_id="lo_disp_name_col"):
                         disp_name_tb = gr.Textbox(label="Display Name",
@@ -3154,10 +3160,10 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 str_tb  = gr.Textbox(label="Default Strength", value="1",
                                      placeholder="e.g. 1  or  1;0  or  0;1", interactive=True)
                 info_tb = gr.Textbox(label="Info / Notes", lines=3,
-                                 placeholder="Any notes about this lora…", interactive=True)
+                                 placeholder="Any notes about this LoRA…", interactive=True)
 
                 with gr.Row(equal_height=True, elem_id="lo_url_row"):
-                    url_tb = gr.Textbox(label="Lora URL", placeholder="No URL set for this lora",
+                    url_tb = gr.Textbox(label="LoRA URL", placeholder="No URL set for this LoRA",
                                         interactive=True, elem_id="lo_url_tb",
                                         scale=5, min_width=0)
                     btn_open_url = gr.Button("🔗 Open URL", size="sm", elem_id="lo_btn_open_url",
@@ -3202,7 +3208,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                     btn_save_edit   = gr.Button("✔ Save Changes",   variant="primary", size="sm",
                                                 elem_id="lo_btn_save_edit")
                     btn_cancel_edit = gr.Button("✖ Cancel", size="sm", elem_id="lo_btn_cancel_edit")
-                with gr.Accordion("🧹 Cleanup Metadata and Images for Missing Loras", open=False, elem_id="lo_cleanup_accordion"):
+                with gr.Accordion("🧹 Cleanup Metadata and Images for Missing LoRAs", open=False, elem_id="lo_cleanup_accordion"):
                     cleanup_scope_dd = gr.Dropdown(
                         choices=[CLEANUP_SCOPE_ALL, CLEANUP_SCOPE_CURRENT],
                         value=CLEANUP_SCOPE_ALL,
@@ -3236,7 +3242,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 placement_mode_dd = gr.Dropdown(
                     choices=[PLACEMENT_MAIN, PLACEMENT_LORA_TAB, PLACEMENT_OWN_TAB],
                     value=init_placement_mode,
-                    label="Lora Organizer placement (requires restart)",
+                    label="LoRA Organizer placement (requires restart)",
                     interactive=True,
                 )
                 trigger_words_dd = gr.Dropdown(
@@ -3247,24 +3253,24 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                         TRIGGER_WORDS_NONE,
                     ],
                     value=init_trigger_words_mode,
-                    label="Trigger words behavior when activating a lora",
+                    label="Trigger words behavior when activating a LoRA",
                     interactive=True,
                 )
                 remove_tw_on_deactivate_cb = gr.Checkbox(
                     value=init_remove_trigger_words_on_deactivate,
-                    label="Remove trigger words from the prompt when deactivating loras",
+                    label="Remove trigger words from the prompt when deactivating LoRAs",
                 )
                 acc_open_cb     = gr.Checkbox(value=init_acc_open,
-                                              label="Start with Lora Organizer expanded")
+                                              label="Start with LoRA Organizer expanded")
                 meta_acc_open_cb = gr.Checkbox(value=init_meta_acc_open,
-                                               label="Start with Lora Metadata expanded")
+                                               label="Start with LoRA Metadata expanded")
                 hide_all_cb     = gr.Checkbox(value=init_hide_all,
                                               label='Hide "All" group')
-                with gr.Accordion("🎛️ Lora & Group List Appearance", open=False, elem_id="lo_list_appearance_accordion"):
+                with gr.Accordion("🎛️ LoRA & Group List Appearance", open=False, elem_id="lo_list_appearance_accordion"):
                     view_mode_dd = gr.Dropdown(
                         choices=[LORA_VIEW_VERTICAL, LORA_VIEW_HORIZONTAL, LORA_VIEW_THUMBNAIL],
                         value=init_view_mode,
-                        label="Lora list view mode",
+                        label="LoRA list view mode",
                         interactive=True,
                     )
                     groups_max_width_sl = gr.Slider(
@@ -3289,11 +3295,11 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                     )
                     height_sl = gr.Slider(
                         minimum=100, maximum=800, step=10,
-                        value=init_height, label="Lora & Group list max height (px)"
+                        value=init_height, label="LoRA & Group list max height (px)"
                     )
                     side_cb = gr.Checkbox(
                         value=init_side,
-                        label="Arrange lora and group lists side-by-side (requires restart)"
+                        label="Arrange LoRA and group lists side-by-side (requires restart)"
                     )
                 btn_save_settings = gr.Button("💾 Save Settings", size="sm", variant="primary",
                                               elem_id="lo_btn_save_settings")
@@ -3851,6 +3857,22 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             outputs=[lora_search_row, lora_search_tb, lora_search_mode_dd,
                      grp_radio, lora_radio, lora_list_html, btn_use, btn_reorder_loras, btn_use_both, st_sel_lora],
             show_progress="hidden",
+            js="""
+                (savedDir, curLoras, currAct, currentSelected) => {
+                    const focusSearch = (attempt = 0) => {
+                        const root = document.querySelector('#lo_lora_search_tb');
+                        const input = root && (root.querySelector('input') || root.querySelector('textarea'));
+                        if (input && input.offsetParent !== null) {
+                            input.focus();
+                            if (input.select) input.select();
+                            return;
+                        }
+                        if (attempt < 25) setTimeout(() => focusSearch(attempt + 1), 80);
+                    };
+                    setTimeout(focusSearch, 80);
+                    return [savedDir, curLoras, currAct, currentSelected];
+                }
+            """,
         )
 
         def _search_lora_controls(term, mode, saved_dir, cur_loras, curr_act, current_selected):
@@ -5056,7 +5078,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 result = _apply_cleanup_plan(plan)
                 lines = [
                     "Cleanup completed.",
-                    f"- Removed lora metadata entries: {result['removed_metadata']}",
+                    f"- Removed LoRA metadata entries: {result['removed_metadata']}",
                     f"- Removed preview images: {result['removed_images']}",
                 ]
                 return (
