@@ -99,4 +99,4 @@ The LoRA files themselves are not modified.
 
 ## Status
 
-Current plugin version: `1.17`
+Current plugin version: `1.18`

@@ -343,6 +343,11 @@ _CSS_BASE = """
     padding: 10px 12px !important;
     color: var(--body-text-color-subdued, #94a3b8) !important;
     font-size: 0.9rem !important;
+    width: 100% !important;
+    grid-column: 1 / -1 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
 }
 #lo_active_list_html,
 #lo_active_list_html .html-container,
@@ -2747,7 +2752,7 @@ def _use_both_button_state(real_name: str | None, saved_dir: str, all_loras: lis
 class LoraOrganizerPlugin(WAN2GPPlugin):
 
     name        = "LoRA Organizer"
-    version     = "1.17"
+    version     = "1.18"
 
     def __init__(self):
         super().__init__()
@@ -2820,15 +2825,6 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                     pass
             # Fallback: use only explicit lora_dir hints. Avoid walking the
             # whole WanGP tree, which can pick unrelated folders like "unused".
-            names = live_loras()
-            if names:
-                sample = names[0]
-                cwd = os.getcwd()
-                self_raw = getattr(self, "lora_dir", "") or ""
-                if self_raw:
-                    abs_d = os.path.abspath(self_raw)
-                    if abs_d != cwd and os.path.isfile(os.path.join(abs_d, sample)):
-                        return abs_d
             self_raw = getattr(self, "lora_dir", "") or ""
             if self_raw:
                 abs_d = os.path.abspath(self_raw)
@@ -2869,15 +2865,15 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             return ""
 
         def live_loras(lora_dir: str = "") -> list:
+            if lora_dir:
+                scanned = _scan_dir(lora_dir)
+                return scanned
             if loras_comp is not None:
                 hierarchy = getattr(loras_comp, "hierarchy", None)
                 if hierarchy:
                     values = [value for value, _path, _name in _hierarchy_item_values(hierarchy)]
                     if values:
                         return values
-            if lora_dir:
-                scanned = _scan_dir(lora_dir)
-                return scanned
             if loras_comp is not None:
                 try:
                     choices = loras_comp.choices or []
@@ -2917,6 +2913,13 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
 
         # ── Bootstrap ─────────────────────────────────────────────────
 
+        def current_loras(cur_loras, saved_dir: str = "") -> list:
+            if cur_loras is not None:
+                return list(cur_loras)
+            if saved_dir:
+                return _scan_dir(saved_dir)
+            return []
+
         init_lora_dir  = resolve_lora_dir_always(state_component_value())
         init_data      = _load_data(init_lora_dir)
         init_settings  = _load_settings()
@@ -2936,7 +2939,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
         init_meta_acc_open = init_settings.get("metadata_accordion_open", False)
         init_hide_all  = init_settings.get("hide_all_group", False)
         init_lora_search_mode = init_settings.get("lora_search_mode", SEARCH_NAME)
-        init_all_loras = live_loras()
+        init_all_loras = _scan_dir(init_lora_dir) if init_lora_dir else []
         init_grp       = init_data.get("last_group", ALL_GROUP)
         if init_grp not in [ALL_GROUP] + _group_names(init_data):
             init_grp = ALL_GROUP
@@ -3017,7 +3020,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                                               interactive=init_has_lora)
                 btn_lora_search = gr.Button("🔍 Search", size="sm", min_width=0,
                                             elem_id="lo_btn_lora_search",
-                                            interactive=init_has_lora)
+                                            interactive=bool(init_all_loras))
 
             with gr.Row(visible=False) as lora_manage_row:
                 auto_sort_dd = gr.Dropdown(
@@ -3447,6 +3450,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 gr.update(interactive=has_lora),  # btn_use
                 _clear_button_update([], False),
                 gr.update(interactive=has_lora),  # btn_reorder_loras
+                gr.update(interactive=bool(cur_loras)),  # btn_lora_search
                 gr.update(visible=False),         # lora_manage_row
                 gr.update(interactive=False),     # btn_lora_sort
                 gr.update(interactive=False),     # btn_lora_sort_used
@@ -3480,7 +3484,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             preview_gallery, preview_upload, preview_manage_row,
             btn_preview_add, btn_preview_expand, btn_preview_left, btn_preview_right, btn_preview_remove, btn_preview_clear,
             edit_row,
-            trigger_words_dd, btn_use, btn_clear_all, btn_reorder_loras,
+            trigger_words_dd, btn_use, btn_clear_all, btn_reorder_loras, btn_lora_search,
             lora_manage_row, btn_lora_sort, btn_lora_sort_used,
             btn_manage_group, group_manage_row, btn_add_sub,
             st_dir, st_loras, st_sel_lora, st_preview_work, st_preview_index, st_preview_expanded,
@@ -3496,13 +3500,6 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
         _full_refresh_outputs = _refresh_out + [btn_use_both]
 
         _loras_change_outputs = _refresh_out + [
-            btn_use_both,
-            st_active_apply_loras,
-            st_active_apply_mult,
-            st_active_reorder_pending,
-            st_active_selected,
-        ]
-        _loras_change_outputs_no_list = _refresh_out[:7] + _refresh_out[8:] + [
             btn_use_both,
             st_active_apply_loras,
             st_active_apply_mult,
@@ -3542,7 +3539,6 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 self._model_change_pending = False
                 self._pending_model_type = None
                 refreshed = list(_do_refresh(None, forced_loras=cur_loras, forced_lora_dir=new_dir, active_values=loras_val, active_mult=curr_mult))
-                del refreshed[7]  # lora_list_html is not an output of this lightweight change handler.
                 active_selected_new = active_selected
                 current_active = list(loras_val) if loras_val else []
                 if active_selected_new and str(active_selected_new) not in {str(v) for v in current_active}:
@@ -3569,7 +3565,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             clear_mult_upd = gr.skip()
             clear_mode_upd = gr.skip()
             clear_expected_upd = gr.skip()
-            all_l = cur_loras if cur_loras else _scan_dir(saved_dir)
+            all_l = current_loras(cur_loras, saved_dir)
             data = _load_data(saved_dir)
             active_html_upd = gr.update(value=_activated_loras_html(
                 saved_dir, display_active, display_mult, all_l, active_selected, data=data
@@ -3607,19 +3603,20 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                     staged_loras_upd = None
                     staged_mult_upd = None
                     active_pending_upd = False
-            updates = [gr.skip()] * len(_loras_change_outputs_no_list)
-            updates[7] = active_html_upd
-            updates[27] = btn_use_upd
-            updates[28] = btn_clear_upd
-            updates[43] = clear_loras_upd
-            updates[44] = clear_mult_upd
-            updates[46] = clear_mode_upd
-            updates[47] = clear_expected_upd
-            updates[53] = btn_both_upd
-            updates[54] = staged_loras_upd
-            updates[55] = staged_mult_upd
-            updates[56] = active_pending_upd
-            updates[57] = active_selected_upd
+            updates = [gr.skip()] * len(_loras_change_outputs)
+            updates[8] = active_html_upd
+            updates[28] = btn_use_upd
+            updates[29] = btn_clear_upd
+            updates[31] = gr.update(interactive=bool(all_l))
+            updates[45] = clear_loras_upd
+            updates[46] = clear_mult_upd
+            updates[48] = clear_mode_upd
+            updates[49] = clear_expected_upd
+            updates[55] = btn_both_upd
+            updates[56] = staged_loras_upd
+            updates[57] = staged_mult_upd
+            updates[58] = active_pending_upd
+            updates[59] = active_selected_upd
             return tuple(updates)
 
         if loras_comp is not None:
@@ -3627,7 +3624,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                               inputs=[loras_comp, mult_comp if mult_comp is not None else gr.State(""), st_dir,
                                       st_loras, st_sel_lora, st_clear_mode, st_clear_expected,
                                       st_active_reorder_pending, st_active_apply_loras, st_active_apply_mult, st_active_selected],
-                              outputs=_loras_change_outputs_no_list,
+                              outputs=_loras_change_outputs,
                               show_progress="hidden")
 
         if mult_comp is not None:
@@ -3636,7 +3633,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                                      mult_comp, st_dir,
                                      st_loras, st_sel_lora, st_clear_mode, st_clear_expected,
                                      st_active_reorder_pending, st_active_apply_loras, st_active_apply_mult, st_active_selected],
-                             outputs=_loras_change_outputs_no_list,
+                             outputs=_loras_change_outputs,
                              show_progress="hidden")
 
         def poll_model_change(saved_dir):
@@ -3645,11 +3642,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             if not pending or not pending_model_type:
                 return gr.skip()
             new_dir = resolve_lora_dir_for_model_type(pending_model_type)
-            cur_loras = _scan_dir(new_dir) if new_dir else []
             if not new_dir:
-                return gr.skip()
-            saved_scan = _scan_dir(saved_dir) if saved_dir else []
-            if new_dir == saved_dir and cur_loras == saved_scan:
                 return gr.skip()
             return json.dumps({"dir": new_dir})
 
@@ -3718,7 +3711,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             old_grp_choices = _group_choices(data, hide_all)
             data["last_group"] = grp
             _save_data(saved_dir, data)
-            all_l      = cur_loras if cur_loras else live_loras(saved_dir)
+            all_l      = current_loras(cur_loras, saved_dir)
             loras      = _loras_for_group(data, grp, all_l, hide_all)
             lo_choices = _lora_choices_for_radio(data, loras)
             has_lora   = bool(lo_choices)
@@ -3755,6 +3748,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 gr.update(interactive=has_lora and not already),          # btn_use
                 _clear_button_update(curr_act or [], False),              # btn_clear_all
                 gr.update(interactive=has_lora),                          # btn_reorder_loras
+                gr.update(interactive=bool(all_l)),                       # btn_lora_search
                 gr.update(visible=False),                                 # edit_row
                 gr.update(visible=False),                                 # lora_manage_row
                 lora_sort_u,
@@ -3773,8 +3767,8 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
         grp_radio.change(fn=on_grp_change,
                          inputs=[grp_radio, st_dir, st_loras, _curr_act_input],
                          outputs=[btn_rename, btn_del, btn_up, btn_down, btn_assign,
-                                  lora_radio, lora_list_html, btn_use, btn_clear_all, btn_reorder_loras, edit_row,
-                                  lora_manage_row, btn_lora_sort, btn_lora_sort_used, btn_lora_done,
+                                  lora_radio, lora_list_html, btn_use, btn_clear_all, btn_reorder_loras,
+                                  btn_lora_search, edit_row, lora_manage_row, btn_lora_sort, btn_lora_sort_used, btn_lora_done,
                                   btn_use_both, grp_radio, btn_manage_group, group_manage_row,
                                   btn_add_sub, st_dir, st_sel_lora],
                          show_progress="hidden",
@@ -3795,7 +3789,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
         def _search_lora_view(term, mode, saved_dir, cur_loras, curr_act, current_selected):
             data = _load_data(saved_dir)
             settings = _load_settings()
-            all_l = cur_loras if cur_loras else live_loras(saved_dir)
+            all_l = current_loras(cur_loras, saved_dir)
             all_group_loras = _loras_for_group(data, ALL_GROUP, all_l, hide_all=False)
             results = _search_loras(data, all_group_loras, term, mode)
             selected = current_selected if current_selected in results else (results[0] if results else None)
@@ -3815,7 +3809,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             if search_mode in (SEARCH_NAME, SEARCH_METADATA, SEARCH_NAME_METADATA):
                 settings["lora_search_mode"] = search_mode
                 _save_settings(settings)
-            all_l = cur_loras if cur_loras else live_loras(saved_dir)
+            all_l = current_loras(cur_loras, saved_dir)
             grp = _grp_name(grp) or data.get("last_group", ALL_GROUP)
             loras = _loras_for_group(data, grp, all_l, settings.get("hide_all_group", False))
             selected = _pick_selected_lora(settings, saved_dir, grp, _lora_choices_for_radio(data, loras))
@@ -3925,7 +3919,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             if strength is None:
                 strength = _auto_strength(saved_dir, real_name)
             url = (e.get("url") or "").strip()
-            all_l = cur_loras if cur_loras else live_loras(saved_dir)
+            all_l = current_loras(cur_loras, saved_dir)
             high, low = _find_pair(real_name, all_l, saved_dir)
             has_pair  = (high is not None and low is not None)
             already   = _lora_already_active(real_name, curr_act)
@@ -3974,7 +3968,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             data = _load_data(saved_dir)
             settings = _load_settings()
             grp = _grp_name(grp)
-            all_l = cur_loras if cur_loras else live_loras(saved_dir)
+            all_l = current_loras(cur_loras, saved_dir)
             loras = _loras_for_group(data, grp, all_l, settings.get("hide_all_group", False))
             if kind == "reorder" and settings.get("lora_auto_sort_mode", AUTO_SORT_NONE) == AUTO_SORT_NONE:
                 new_order = [name for name in action.get("order", []) if name in loras]
@@ -4194,7 +4188,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                         real_name,
                         grp,
                         _load_data(saved_dir),
-                        cur_loras if cur_loras else live_loras(saved_dir),
+                        current_loras(cur_loras, saved_dir),
                         _load_settings().get("lora_auto_sort_mode", AUTO_SORT_NONE),
                     )
                 )
@@ -4208,7 +4202,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 real_name,
                 grp,
                 _load_data(saved_dir),
-                cur_loras if cur_loras else live_loras(saved_dir),
+                current_loras(cur_loras, saved_dir),
                 auto_sort_mode,
             ),
             inputs=[auto_sort_dd, lora_radio, grp_radio, st_dir, st_loras],
@@ -4220,7 +4214,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             settings["lora_auto_sort_mode"] = auto_sort_mode
             _save_settings(settings)
             data = _load_data(saved_dir)
-            all_l = cur_loras if cur_loras else live_loras(saved_dir)
+            all_l = current_loras(cur_loras, saved_dir)
             _apply_lora_auto_sort(data, all_l, auto_sort_mode)
             if auto_sort_mode in (AUTO_SORT_NAME, AUTO_SORT_MOST_USED):
                 _save_data(saved_dir, data)
@@ -4463,7 +4457,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
         def sort_loras_by_name(real_name, grp, saved_dir, cur_loras):
             grp = _grp_name(grp)
             data = _load_data(saved_dir)
-            all_l = cur_loras if cur_loras else live_loras(saved_dir)
+            all_l = current_loras(cur_loras, saved_dir)
             settings = _load_settings()
             ordered = _loras_for_group(data, grp, all_l, settings.get("hide_all_group", False))
             ordered = _sort_lora_names(data, ordered, AUTO_SORT_NAME)
@@ -4490,7 +4484,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
         def sort_loras_by_most_used(real_name, grp, saved_dir, cur_loras):
             grp = _grp_name(grp)
             data = _load_data(saved_dir)
-            all_l = cur_loras if cur_loras else live_loras(saved_dir)
+            all_l = current_loras(cur_loras, saved_dir)
             settings = _load_settings()
             ordered = _loras_for_group(data, grp, all_l, settings.get("hide_all_group", False))
             ordered = _sort_lora_names(data, ordered, AUTO_SORT_MOST_USED)
@@ -4522,7 +4516,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             if not grp or grp == ALL_GROUP:
                 return gr.update(visible=False), gr.update(visible=False), saved_dir
             data    = _load_data(saved_dir)
-            all_l   = cur_loras if cur_loras else live_loras(saved_dir)
+            all_l   = current_loras(cur_loras, saved_dir)
             already = [l for l in all_l
                        if grp in data["loras"].get(l, {}).get("groups", [])]
             return (gr.update(choices=_assign_choices(all_l), value=already, visible=True),
@@ -4537,7 +4531,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 return gr.update(visible=False), gr.update(visible=False), gr.update(), saved_dir, None
             data  = _load_data(saved_dir)
             settings = _load_settings()
-            all_l = cur_loras if cur_loras else live_loras(saved_dir)
+            all_l = current_loras(cur_loras, saved_dir)
             for l in all_l:
                 e = _ensure_lora(data, l, saved_dir)
                 if grp in e["groups"]:
@@ -4583,7 +4577,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
         def _build_replace_prompt(active_values, saved_dir, known_loras=None):
             if not active_values:
                 return ""
-            all_loras = known_loras if known_loras is not None else live_loras(saved_dir)
+            all_loras = current_loras(known_loras, saved_dir)
             value_to_real = {lora_val(real_name): real_name for real_name in all_loras}
             data = _load_data(saved_dir)
             trigger_words = []
@@ -4598,7 +4592,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             return _join_trigger_words(trigger_words)
 
         def _active_values_to_real_names(active_values, saved_dir, known_loras=None):
-            all_loras = known_loras if known_loras is not None else live_loras(saved_dir)
+            all_loras = current_loras(known_loras, saved_dir)
             value_to_real = {lora_val(real_name): real_name for real_name in all_loras}
             real_names = []
             for active_value in list(active_values or []):
@@ -4645,7 +4639,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             if trigger_words_mode == TRIGGER_WORDS_REPLACE:
                 new_prompt = _build_replace_prompt(activated, saved_dir)
             settings = _load_settings()
-            all_l = cur_loras if cur_loras else live_loras(saved_dir)
+            all_l = current_loras(cur_loras, saved_dir)
             data = _load_data(saved_dir)
             if settings.get("lora_auto_sort_mode") == AUTO_SORT_MOST_USED:
                 _apply_lora_auto_sort(data, all_l, AUTO_SORT_MOST_USED, cur_grp, include_all_group=True)
@@ -4672,7 +4666,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                      trigger_words_mode, saved_dir, cur_loras, cur_grp):
             if not real_name:
                 return gr.update(), gr.update(), gr.update(), gr.update(interactive=False), saved_dir, gr.update(), None, gr.update()
-            all_l     = cur_loras if cur_loras else live_loras(saved_dir)
+            all_l     = current_loras(cur_loras, saved_dir)
             high, low = _find_pair(real_name, all_l, saved_dir)
             if high is None or low is None:
                 return gr.update(), gr.update(), gr.update(), gr.update(interactive=False), saved_dir, gr.update(), None, gr.update()
@@ -4773,7 +4767,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 if settings.get("lora_auto_sort_mode") != AUTO_SORT_MOST_USED:
                     return gr.skip()
                 data = _load_data(saved_dir)
-                all_l = cur_loras if cur_loras else live_loras(saved_dir)
+                all_l = current_loras(cur_loras, saved_dir)
                 grp = _grp_name(grp) or ALL_GROUP
                 loras = _loras_for_group(data, grp, all_l, settings.get("hide_all_group", False))
                 safe_selected = selected if selected in loras else (loras[0] if loras else None)
@@ -4790,7 +4784,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             current_active = list(curr_act) if curr_act else []
             current_mult = curr_mult or ""
             current_prompt = curr_prompt or ""
-            all_l = cur_loras if cur_loras else live_loras(saved_dir)
+            all_l = current_loras(cur_loras, saved_dir)
             data = _load_data(saved_dir)
             if undo_mode:
                 restored_active = list(saved_loras) if saved_loras else []
@@ -4980,7 +4974,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             if real_name and saved_dir:
                 clean_disp = (disp_name or "").strip()
                 data = _load_data(saved_dir)
-                all_l = cur_loras if cur_loras else live_loras(saved_dir)
+                all_l = current_loras(cur_loras, saved_dir)
                 previous_display_name = (data["loras"].get(real_name, {}).get("display_name") or "").strip()
                 if clean_disp != previous_display_name and clean_disp and not _is_display_name_unique(data, real_name, clean_disp, all_l):
                     gr.Warning(f"The display name '{clean_disp}' is already used.")
@@ -5016,7 +5010,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 for path in removed_images:
                     _safe_remove_preview_image(path)
             data       = _load_data(saved_dir)
-            all_l      = cur_loras if cur_loras else _scan_dir(saved_dir)
+            all_l      = current_loras(cur_loras, saved_dir)
             loras      = _loras_for_group(data, cur_grp or ALL_GROUP, all_l)
             lo_choices = _lora_choices_for_radio(data, loras)
             safe_val   = (real_name if any(c[1] == real_name for c in lo_choices)
@@ -5045,7 +5039,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                                      btn_use_both, lora_radio, lora_list_html, st_dir, st_sel_lora, st_preview_work, st_preview_index, st_preview_expanded, st_preview_upload_open])
 
         def cancel_edit(real_name, saved_dir, cur_loras):
-            all_l = cur_loras if cur_loras else _scan_dir(saved_dir)
+            all_l = current_loras(cur_loras, saved_dir)
             pair_btn_u = _use_both_button_state(real_name, saved_dir, all_l)
             data = _load_data(saved_dir)
             loras = _loras_for_group(data, data.get("last_group", ALL_GROUP), all_l)
@@ -5149,7 +5143,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             if data.get("last_group") != stored_grp:
                 data["last_group"] = stored_grp
                 _save_data(saved_dir, data)
-            all_l = cur_loras if cur_loras else _scan_dir(saved_dir)
+            all_l = current_loras(cur_loras, saved_dir)
             loras = _loras_for_group(data, selected_grp, all_l, hide_all)
             lo_choices = _lora_choices_for_radio(data, loras)
             sel_lora = _pick_selected_lora(settings, saved_dir, selected_grp, lo_choices)
@@ -5179,6 +5173,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 _manage_group_button_update(selected_grp),                      # btn_manage_group
                 gr.update(interactive=bool(selected_grp and selected_grp != ALL_GROUP)),  # btn_add_sub
                 gr.update(interactive=has_lora),                                 # btn_use
+                gr.update(interactive=bool(all_l)),                              # btn_lora_search
                 saved_dir,
                 sel_lora,
             )
@@ -5189,7 +5184,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             outputs=[orient_html, thumbnail_fit_html, groups_width_html, btn_up, btn_down, height_html, metadata_accordion,
                      grp_radio, lora_radio, lora_list_html, btn_lora_sort, btn_lora_sort_used,
                      btn_rename, btn_del, btn_assign, btn_manage_group, btn_add_sub,
-                     btn_use,
+                     btn_use, btn_lora_search,
                      st_dir, st_sel_lora],
             js=(
                 "(...args) => {"

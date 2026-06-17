@@ -1,7 +1,7 @@
 {
     "id": "wan2gp-lora-organizer",
     "name": "LoRA Organizer",
-    "version": "1.17",
+    "version": "1.18",
     "description": "LoRA Organizer adds a UI to the LoRA tab, letting you organize LoRAs into groups and subgroups, store metadata, and activate LoRAs with their trigger words and strength in one click.",
     "author": "ppc2017",
     "url": "https://github.com/ppc2017/wan2gp-lora-organizer"
