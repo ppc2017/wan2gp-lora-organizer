@@ -2655,7 +2655,33 @@ def _split_multiplier_values(current: str) -> list[str]:
     text = (current or "").strip()
     if not text:
         return []
-    return [part for part in re.split(r"\s+", text) if part]
+    values = []
+    for chunk in re.split(r"\s+", text):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        while "|" in chunk:
+            before, after = chunk.split("|", 1)
+            values.append(before + "|")
+            chunk = after
+        if chunk:
+            values.append(chunk)
+    return values
+
+
+def _join_multiplier_values(values: list[str]) -> str:
+    result = ""
+    for raw in values:
+        value = str(raw or "").strip()
+        if not value:
+            continue
+        if not result:
+            result = value
+        elif result.endswith("|"):
+            result += value
+        else:
+            result += " " + value
+    return result
 
 
 def _activated_loras_html(lora_dir: str, active_values, multipliers: str = "", known_loras: list | None = None,
@@ -2752,7 +2778,7 @@ def _use_both_button_state(real_name: str | None, saved_dir: str, all_loras: lis
 class LoraOrganizerPlugin(WAN2GPPlugin):
 
     name        = "LoRA Organizer"
-    version     = "1.18"
+    version     = "1.19"
 
     def __init__(self):
         super().__init__()
@@ -4119,12 +4145,12 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                         strengths.append("")
                     strengths.append(new_strength)
             elif kind == "reorder":
-                final_mult = " ".join(strengths[:len(values)])
+                final_mult = _join_multiplier_values(strengths[:len(values)])
                 return gr.skip(), gr.skip(), gr.skip(), values, final_mult, True, selected
             else:
                 return gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip()
 
-            return values, " ".join(strengths[:len(values)]), prompt_text, gr.skip(), gr.skip(), False, selected
+            return values, _join_multiplier_values(strengths[:len(values)]), prompt_text, gr.skip(), gr.skip(), False, selected
 
         def apply_active_reorder(staged_values, staged_mult):
             if staged_values is None:
