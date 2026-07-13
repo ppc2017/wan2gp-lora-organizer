@@ -2778,7 +2778,7 @@ def _use_both_button_state(real_name: str | None, saved_dir: str, all_loras: lis
 class LoraOrganizerPlugin(WAN2GPPlugin):
 
     name        = "LoRA Organizer"
-    version     = "1.19"
+    version     = "1.20"
 
     def __init__(self):
         super().__init__()
@@ -3192,7 +3192,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                                  placeholder="Any notes about this LoRA…", interactive=True)
 
                 with gr.Row(equal_height=True, elem_id="lo_url_row"):
-                    url_tb = gr.Textbox(label="LoRA URL", placeholder="No URL set for this LoRA",
+                    url_tb = gr.Textbox(label="LoRA Source URL", placeholder="No URL set for this LoRA",
                                         interactive=True, elem_id="lo_url_tb",
                                         scale=5, min_width=0)
                     btn_open_url = gr.Button("🔗 Open URL", size="sm", elem_id="lo_btn_open_url",

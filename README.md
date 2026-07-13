@@ -73,7 +73,7 @@ Each LoRA can store:
 - Trigger Words
 - Default Strength
 - Info / Notes
-- LoRA URL
+- LoRA Source URL
 - Preview Images
 
 Metadata fields are editable. When you change a field, `Save Changes` and `Cancel` appear.
@@ -99,4 +99,4 @@ The LoRA files themselves are not modified.
 
 ## Status
 
-Current plugin version: `1.19`
+Current plugin version: `1.20`
