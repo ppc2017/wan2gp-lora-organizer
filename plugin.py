@@ -1097,6 +1097,97 @@ def _preview_image_urls_for_entry(entry: dict, lora_dir: str = "", url_cache: di
     return urls
 
 
+def _lora_manager_metadata_path(real_name: str, lora_dir: str) -> str:
+    """Find the LoRA Manager sidecar without modifying its data."""
+    if not real_name or not lora_dir:
+        return ""
+    metadata_root = os.path.join(os.getcwd(), "loras_metadata")
+    stem = os.path.splitext(os.path.basename(real_name))[0]
+    if not os.path.isdir(metadata_root):
+        return ""
+
+    normalized_dir = os.path.normpath(os.path.abspath(lora_dir))
+    parts = normalized_dir.replace("\\", "/").split("/")
+    loras_index = next((i for i in range(len(parts) - 1, -1, -1) if parts[i].casefold() == "loras"), -1)
+    relative_parts = parts[loras_index + 1:] if loras_index >= 0 else [os.path.basename(normalized_dir)]
+    candidates = []
+    if relative_parts:
+        candidates.append(os.path.join(metadata_root, *relative_parts, f"{stem}.json"))
+    candidates.extend([
+        os.path.join(metadata_root, os.path.basename(normalized_dir), f"{stem}.json"),
+        os.path.join(metadata_root, f"{stem}.json"),
+    ])
+    seen = set()
+    for candidate in candidates:
+        normalized = os.path.normcase(os.path.abspath(candidate))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        if os.path.isfile(candidate):
+            return candidate
+    return ""
+
+
+def _lora_manager_metadata(real_name: str, lora_dir: str, cache: dict | None = None) -> dict:
+    key = (os.path.abspath(lora_dir) if lora_dir else "", real_name)
+    if cache is not None and key in cache:
+        return cache[key]
+    path = _lora_manager_metadata_path(real_name, lora_dir)
+    metadata = {}
+    if path:
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                loaded = json.load(handle)
+            if isinstance(loaded, dict):
+                metadata = loaded
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            pass
+    if cache is not None:
+        cache[key] = metadata
+    return metadata
+
+
+def _effective_trigger_words(real_name: str, lora_dir: str, data: dict | None = None,
+                             manager_cache: dict | None = None) -> str:
+    entry = (data if data is not None else _load_data(lora_dir)).get("loras", {}).get(real_name, {})
+    organizer_words = str(entry.get("trigger_words") or "").strip()
+    if organizer_words:
+        return organizer_words
+    if not _load_settings().get("lora_manager_fallback", True):
+        return ""
+    trained_words = _lora_manager_metadata(real_name, lora_dir, manager_cache).get("trainedWords", [])
+    if isinstance(trained_words, str):
+        return trained_words.strip()
+    if isinstance(trained_words, list):
+        return ", ".join(str(word).strip() for word in trained_words if str(word).strip())
+    return ""
+
+
+def _effective_lora_url(real_name: str, lora_dir: str, data: dict | None = None) -> str:
+    entry = (data if data is not None else _load_data(lora_dir)).get("loras", {}).get(real_name, {})
+    organizer_url = str(entry.get("url") or "").strip()
+    if organizer_url or not _load_settings().get("lora_manager_fallback", True):
+        return organizer_url
+    model_id = str(_lora_manager_metadata(real_name, lora_dir).get("modelId") or "").strip()
+    if model_id.isdigit():
+        return f"https://civitai.com/models/{model_id}"
+    return ""
+
+
+def _lora_manager_preview_url(real_name: str, lora_dir: str, cache: dict | None = None) -> str:
+    metadata = _lora_manager_metadata(real_name, lora_dir, cache)
+    model_id = str(metadata.get("modelId") or "").strip()
+    if not model_id or not model_id.isdigit():
+        return ""
+    preview_root = os.path.join(os.getcwd(), "icons", "lora_previews")
+    for extension in (".jpg", ".png"):
+        path = os.path.join(preview_root, model_id + extension)
+        url = _preview_image_url(path)
+        if url:
+            return url
+    return ""
+
+
 def _copy_preview_uploads(lora_dir: str, real_name: str, uploaded_files) -> list[str]:
     if not lora_dir or not real_name or not uploaded_files:
         return []
@@ -1126,6 +1217,7 @@ def _copy_preview_uploads(lora_dir: str, real_name: str, uploaded_files) -> list
 
 def _empty_settings() -> dict:
     return {
+        "lora_manager_fallback": True,
         "trigger_words_mode": DEFAULT_TRIGGER_WORDS_MODE,
         "remove_trigger_words_on_deactivate": False,
         "thumbnail_cycle_mode": THUMB_CYCLE_HOVER,
@@ -1150,7 +1242,8 @@ def _load_settings() -> dict:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            data.setdefault("trigger_words_mode", DEFAULT_TRIGGER_WORDS_MODE)
+                data.setdefault("lora_manager_fallback", True)
+                data.setdefault("trigger_words_mode", DEFAULT_TRIGGER_WORDS_MODE)
             data.setdefault("remove_trigger_words_on_deactivate", False)
             data.setdefault("thumbnail_cycle_mode", THUMB_CYCLE_HOVER)
             data["lora_view_mode"] = _normalize_lora_view_mode(data.get("lora_view_mode"))
@@ -1821,6 +1914,7 @@ def _lora_list_html(data: dict, loras: list, selected: str | None, reveal_select
     )
     view_style = f" style='--lo-thumb-cols:{thumbnail_columns};'" if view_mode == LORA_VIEW_THUMBNAIL else ""
     default_thumb = _default_thumbnail_url() if view_mode == LORA_VIEW_THUMBNAIL else ""
+    manager_metadata_cache = {}
     if not loras:
         return (
             f"<div id='lo_lora_list' class='{view_class}'{view_style} "
@@ -1836,6 +1930,10 @@ def _lora_list_html(data: dict, loras: list, selected: str | None, reveal_select
         hover_item_attrs = ""
         if view_mode == LORA_VIEW_THUMBNAIL:
             preview_urls = _preview_image_urls_for_entry(data["loras"].get(real_name, {}), lora_dir, preview_url_cache)
+            if not preview_urls and settings.get("lora_manager_fallback", True):
+                manager_preview = _lora_manager_preview_url(real_name, lora_dir, manager_metadata_cache)
+                if manager_preview:
+                    preview_urls = [manager_preview]
             thumb_uri = (preview_urls[0] if preview_urls else "") or default_thumb
         else:
             preview_urls = []
@@ -2778,7 +2876,7 @@ def _use_both_button_state(real_name: str | None, saved_dir: str, all_loras: lis
 class LoraOrganizerPlugin(WAN2GPPlugin):
 
     name        = "LoRA Organizer"
-    version     = "1.20"
+    version     = "1.21"
 
     def __init__(self):
         super().__init__()
@@ -2960,6 +3058,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
         init_side      = init_settings.get("side_by_side", True)
         init_groups_max_width = init_settings.get("groups_max_width", 0)
         init_trigger_words_mode = init_settings.get("trigger_words_mode", DEFAULT_TRIGGER_WORDS_MODE)
+        init_lora_manager_fallback = init_settings.get("lora_manager_fallback", True)
         init_height    = init_settings.get("listbox_height", DEFAULT_LISTBOX_HEIGHT)
         init_acc_open  = init_settings.get("accordion_open", False)
         init_meta_acc_open = init_settings.get("metadata_accordion_open", False)
@@ -3295,6 +3394,10 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                                                label="Start with LoRA Metadata expanded")
                 hide_all_cb     = gr.Checkbox(value=init_hide_all,
                                               label='Hide "All" group')
+                lora_manager_fallback_cb = gr.Checkbox(
+                    value=init_lora_manager_fallback,
+                    label="Use LoRA Manager plugin metadata and previews as fallback",
+                )
                 with gr.Accordion("🎛️ LoRA & Group List Appearance", open=False, elem_id="lo_list_appearance_accordion"):
                     view_mode_dd = gr.Dropdown(
                         choices=[LORA_VIEW_VERTICAL, LORA_VIEW_HORIZONTAL, LORA_VIEW_THUMBNAIL],
@@ -3426,14 +3529,14 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                               data: dict | None = None):
             data = data if data is not None else _load_data(lora_dir)
             e   = data["loras"].get(real_name, {})
-            url = (e.get("url") or "").strip()
+            url = _effective_lora_url(real_name, lora_dir, data)
             strength = e.get("default_strength")
             if real_name and strength is None:
                 strength = _auto_strength(lora_dir, real_name)
             return (
                 gr.update(value=e.get("display_name", ""),            interactive=True),
                 gr.update(value=os.path.splitext(real_name)[0] if real_name else "", interactive=False),
-                gr.update(value=e.get("trigger_words", ""),           interactive=True),
+                gr.update(value=_effective_trigger_words(real_name, lora_dir, data), interactive=True),
                 gr.update(value=str(strength or "1"), interactive=True),
                 gr.update(value=e.get("info", ""),                    interactive=True),
                 gr.update(value=url, interactive=True, visible=True),
@@ -4596,7 +4699,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             if not already:
                 new_mult = _append_mult(new_mult, strength)
             new_prompt = curr_prompt or ""
-            tw = entry.get("trigger_words", "")
+            tw = _effective_trigger_words(real_name, saved_dir, _load_data(saved_dir))
             new_prompt = _apply_trigger_words(new_prompt, tw, trigger_words_mode)
             return activated, new_mult, new_prompt
 
@@ -4612,7 +4715,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 if not real_name:
                     continue
                 entry = data["loras"].get(real_name, {})
-                tw = (entry.get("trigger_words") or "").strip()
+                tw = _effective_trigger_words(real_name, saved_dir, data).strip()
                 if tw:
                     trigger_words.append(tw)
             return _join_trigger_words(trigger_words)
@@ -4638,8 +4741,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             data = _load_data(saved_dir)
             for real_name in real_names:
                 entry = data["loras"].get(real_name, {})
-                trigger_words = str(entry.get("trigger_words", "") or "")
-                tw = trigger_words.strip()
+                tw = _effective_trigger_words(real_name, saved_dir, data).strip()
                 if not tw:
                     continue
                 if trigger_words_mode == TRIGGER_WORDS_PREPEND:
@@ -5017,12 +5119,27 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                         False,
                         bool(preview_files),
                     )
+                existing_entry = data["loras"].get(real_name, {})
+                existing_trigger_words = str(existing_entry.get("trigger_words") or "").strip()
+                submitted_trigger_words = (tw or "").strip()
+                manager_trigger_words = _effective_trigger_words(real_name, saved_dir, data)
+                existing_url = str(existing_entry.get("url") or "").strip()
+                submitted_url = (url or "").strip()
+                manager_url = _effective_lora_url(real_name, saved_dir, data)
                 e = _ensure_lora(data, real_name, saved_dir)
                 e["display_name"]     = clean_disp
-                e["trigger_words"]    = (tw or "").strip()
+                # Keep Manager fallback data read-only when the unchanged fallback
+                # value is returned by the metadata form.
+                e["trigger_words"]    = (
+                    "" if not existing_trigger_words and submitted_trigger_words == manager_trigger_words
+                    else submitted_trigger_words
+                )
                 e["default_strength"] = (strength or "1").strip() or "1"
                 e["info"]             = (info_text or "").strip()
-                e["url"]              = (url or "").strip()
+                e["url"]              = (
+                    "" if not existing_url and submitted_url == manager_url
+                    else submitted_url
+                )
                 settings = _load_settings()
                 if settings.get("lora_auto_sort_mode") == AUTO_SORT_NAME and clean_disp != previous_display_name:
                     _apply_lora_auto_sort(data, all_l, AUTO_SORT_NAME, cur_grp, include_all_group=True)
@@ -5144,7 +5261,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
         )
 
         # ── Settings: Save button ──────────────────────────────────────
-        def save_settings_cb(view_mode, auto_sort_mode, thumbnail_columns, thumbnail_fit_without_cropping, thumbnail_cycle_mode, placement_mode, trigger_words_mode, remove_trigger_words_on_deactivate, acc_open, meta_acc_open, hide_all, side, groups_max_width, height, saved_dir, cur_loras):
+        def save_settings_cb(view_mode, auto_sort_mode, thumbnail_columns, thumbnail_fit_without_cropping, thumbnail_cycle_mode, placement_mode, lora_manager_fallback, trigger_words_mode, remove_trigger_words_on_deactivate, acc_open, meta_acc_open, hide_all, side, groups_max_width, height, saved_dir, cur_loras):
             settings = _load_settings()
             view_mode = _normalize_lora_view_mode(view_mode)
             horiz = _is_horizontal_view_mode(view_mode)
@@ -5154,6 +5271,7 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
             settings["thumbnail_fit_without_cropping"] = bool(thumbnail_fit_without_cropping)
             settings["thumbnail_cycle_mode"]  = thumbnail_cycle_mode
             settings["placement_mode"]        = placement_mode
+            settings["lora_manager_fallback"] = bool(lora_manager_fallback)
             settings["trigger_words_mode"]    = trigger_words_mode
             settings["remove_trigger_words_on_deactivate"] = bool(remove_trigger_words_on_deactivate)
             settings["accordion_open"]        = acc_open
@@ -5202,16 +5320,17 @@ class LoraOrganizerPlugin(WAN2GPPlugin):
                 gr.update(interactive=bool(all_l)),                              # btn_lora_search
                 saved_dir,
                 sel_lora,
+                gr.update(value=_effective_trigger_words(sel_lora, saved_dir, data)),
             )
 
         btn_save_settings.click(
             fn=save_settings_cb,
-            inputs=[view_mode_dd, auto_sort_dd, thumbnail_cols_sl, thumbnail_fit_cb, thumbnail_cycle_mode_dd, placement_mode_dd, trigger_words_dd, remove_tw_on_deactivate_cb, acc_open_cb, meta_acc_open_cb, hide_all_cb, side_cb, groups_max_width_sl, height_sl, st_dir, st_loras],
+            inputs=[view_mode_dd, auto_sort_dd, thumbnail_cols_sl, thumbnail_fit_cb, thumbnail_cycle_mode_dd, placement_mode_dd, lora_manager_fallback_cb, trigger_words_dd, remove_tw_on_deactivate_cb, acc_open_cb, meta_acc_open_cb, hide_all_cb, side_cb, groups_max_width_sl, height_sl, st_dir, st_loras],
             outputs=[orient_html, thumbnail_fit_html, groups_width_html, btn_up, btn_down, height_html, metadata_accordion,
                      grp_radio, lora_radio, lora_list_html, btn_lora_sort, btn_lora_sort_used,
                      btn_rename, btn_del, btn_assign, btn_manage_group, btn_add_sub,
                      btn_use, btn_lora_search,
-                     st_dir, st_sel_lora],
+                     st_dir, st_sel_lora, tw_tb],
             js=(
                 "(...args) => {"
                 "  var btn = document.getElementById('lo_btn_save_settings');"
